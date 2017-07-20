@@ -181,20 +181,15 @@ struct test_header {
 #define KEY_BUTTON_RIGHT    KEY_APPSELECT
 
 /*********************for Debug LOG switch*******************/
+// #define DEBUG
 #define TPD_ERR(a, arg...)  pr_err(TPD_DEVICE ": " a, ##arg)
 #define TPDTM_DMESG(a, arg...)  printk(TPD_DEVICE ": " a, ##arg)
-
-#define TPD_DEBUG(a, arg...)\
-	do {\
-		if (tp_debug)\
-		pr_err(TPD_DEVICE ": " a, ##arg);\
-	} while (0)
+#define TPD_DEBUG(a,arg...)  pr_debug(TPD_DEVICE ": " a,##arg)
 
 /*-------------------------------Global Variable-----------------------------*/
 static int baseline_ret = 0;
 static int TP_FW;
 static int tp_dev = 6;
-static unsigned int tp_debug = 0;
 static int button_map[3];
 static int tx_rx_num[2];
 static int16_t Rxdata[30][30];
@@ -2022,14 +2017,6 @@ static ssize_t store_tp(struct device *dev,
                 struct device_attribute *attr,
                 const char *buf, size_t size)
 {
-	int tmp = 0;
-
-	if (kstrtoint(buf, 10, &tmp) == 1) {
-		tp_debug = tmp;
-	} else {
-		TPDTM_DMESG("invalid content: '%s', length = %zd\n",
-		buf, size);
-	}
 	return size;
 }
 static ssize_t vendor_id_read_func(struct file *file,
@@ -3195,7 +3182,6 @@ static DEVICE_ATTR(tp_baseline_image, 0664, tp_baseline_show, tp_delta_store);
 static DEVICE_ATTR(tp_baseline_image_with_cbc, 0664,
 tp_baseline_show_with_cbc, tp_test_store);
 static DEVICE_ATTR(tp_delta_image, 0444, tp_rawdata_show, NULL);
-static DEVICE_ATTR(tp_debug_log, 0664, tp_show, store_tp);
 static DEVICE_ATTR(tp_fw_update, 0664, synaptics_update_fw_show,
 synaptics_update_fw_store);
 static DEVICE_ATTR(tp_doze_time, 0664, tp_doze_time_show, tp_doze_time_store);
@@ -4819,11 +4805,6 @@ static int synaptics_ts_probe(struct i2c_client *client,
 	}
 	if (device_create_file(&client->dev, &dev_attr_tp_doze_time)) {
 		TPDTM_DMESG("device_create_file failt\n");
-		goto exit_init_failed;
-	}
-	if (device_create_file(&client->dev,
-	    &dev_attr_tp_debug_log)) {
-		TPDTM_DMESG("driver_create_file failt\n");
 		goto exit_init_failed;
 	}
 	if (device_create_file(&client->dev,

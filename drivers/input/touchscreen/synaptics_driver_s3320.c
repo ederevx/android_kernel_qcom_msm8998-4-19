@@ -208,7 +208,7 @@ static int get_tp_base = 0;
 static int limit_enable = 1;
 static void synaptics_tpedge_limitfunc(void);
 #endif
-/*static int ch_getbase_status = 0;*/
+/*static int ch_getbase_status;*/
 /*struct timeval start_time,end_time;*/
 
 #ifdef SUPPORT_TP_SLEEP_MODE
@@ -297,7 +297,7 @@ static int F34_FLASH_CTRL00;
 static int F51_CUSTOM_CTRL00;
 static int F51_CUSTOM_DATA04;
 static int F51_CUSTOM_DATA11;
-static __read_mostly int version_is_s3508;
+static int version_is_s3508 __read_mostly;
 #if TP_TEST_ENABLE
 static int F54_ANALOG_QUERY_BASE;/*0x73*/
 static int F54_ANALOG_COMMAND_BASE;/*0x72*/
@@ -322,22 +322,22 @@ struct device_attribute *attr, char *buf);
 static int synapitcs_ts_update(struct i2c_client *client,
 const uint8_t *data, uint32_t data_len, bool force);
 
-static int synaptics_rmi4_i2c_read_block(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_block(struct i2c_client *client,
 unsigned char addr, unsigned short length, unsigned char *data);
 
-static int synaptics_rmi4_i2c_write_block(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_block(struct i2c_client *client,
 unsigned char addr, unsigned short length, unsigned char const *data);
 
-static int synaptics_rmi4_i2c_read_byte(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_byte(struct i2c_client *client,
 		unsigned char addr);
 
-static int synaptics_rmi4_i2c_write_byte(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_byte(struct i2c_client *client,
 		unsigned char addr, unsigned char data);
 
-static int synaptics_rmi4_i2c_read_word(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_word(struct i2c_client *client,
 		unsigned char addr);
 
-static int synaptics_rmi4_i2c_write_word(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_word(struct i2c_client *client,
 		unsigned char addr, unsigned short data);
 static int synaptics_mode_change(int mode);
 
@@ -950,7 +950,7 @@ static int synaptics_enable_interrupt(struct synaptics_ts_data *ts, int enable)
 	return 0;
 }
 
-static int synaptics_rmi4_i2c_read_block(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_block(struct i2c_client *client,
 unsigned char addr, unsigned short length, unsigned char *data)
 {
 	int retval;
@@ -990,7 +990,7 @@ unsigned char addr, unsigned short length, unsigned char *data)
 	return retval;
 }
 
-static int synaptics_rmi4_i2c_write_block(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_block(struct i2c_client *client,
 unsigned char addr, unsigned short length, unsigned char const *data)
 {
 	int retval;
@@ -1021,7 +1021,7 @@ unsigned char addr, unsigned short length, unsigned char const *data)
 	return retval;
 }
 
-static int synaptics_rmi4_i2c_read_byte(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_byte(struct i2c_client *client,
 unsigned char addr)
 {
 	int retval = 0;
@@ -1033,7 +1033,7 @@ unsigned char addr)
 	return retval;
 }
 
-static int synaptics_rmi4_i2c_write_byte(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_byte(struct i2c_client *client,
 unsigned char addr, unsigned char data)
 {
 	int retval;
@@ -1043,7 +1043,7 @@ unsigned char addr, unsigned char data)
 	return retval;
 }
 
-static int synaptics_rmi4_i2c_read_word(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_read_word(struct i2c_client *client,
 unsigned char addr)
 {
 	int retval;
@@ -1055,7 +1055,7 @@ unsigned char addr)
 	return retval;
 }
 
-static int synaptics_rmi4_i2c_write_word(struct i2c_client *client,
+static inline int synaptics_rmi4_i2c_write_word(struct i2c_client *client,
 unsigned char addr, unsigned short data)
 {
 	int retval;
@@ -1129,11 +1129,6 @@ static void gesture_judge(struct synaptics_ts_data *ts)
 
 	uint8_t gesture_buffer[10];
 	unsigned char reportbuf[3];
-
-	if (version_is_s3508)
-		F12_2D_DATA04 = 0x0008;
-	else
-		F12_2D_DATA04 = 0x000A;
 
 	ret = synaptics_rmi4_i2c_write_byte(ts->client, 0xff, 0x00);
 
@@ -1385,10 +1380,6 @@ static inline void int_touch(void)
 	}
 #endif
 	i2c_smbus_write_byte_data(ts->client, 0xff, 0x0);
-	if (version_is_s3508)
-		F12_2D_DATA15 = 0x0009;
-	else
-		F12_2D_DATA15 = 0x000C;
 	ret = synaptics_rmi4_i2c_read_block(ts->client,
 	F12_2D_DATA15, 2, object_attention);
 
@@ -3487,16 +3478,7 @@ static ssize_t touch_press_status_read(struct file *file, char __user *user_buf,
 	int x, y;
 	int press_points = 0;
 	int points_misspresee = 0;
-	int str_n = 0;
-
-	char *page = kzalloc(1024 * 2, GFP_KERNEL);
-
-	if (!page) {
-		TPD_ERR("%s malloc memery error!", __func__);
-		return -ENOMEM;
-	}
-
-	TPD_ERR("%s", __func__);
+	char page[64];
 
 	for (x = 0; x < TX_NUMBER; x++) {
 		for (y = 0; y < RX_NUMBER; y++) {
@@ -3518,9 +3500,9 @@ static ssize_t touch_press_status_read(struct file *file, char __user *user_buf,
 		get_tp_base = 0;
 
 	TPD_ERR("points_mispressee num:%d,get_tp_base:%d\n", points_misspresee, get_tp_base);
-	str_n += sprintf(&page[str_n], "\n%s %d points delta > [25]\n", (press_points > 4) ? "near" : "away", press_points);
+	snprintf(page, 24, "\n%s %d PD > [25]\n",
+		  (press_points > 4) ? "near" : "away", press_points);
 	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-	kfree(page);
 	return ret;
 }
 
@@ -4711,6 +4693,16 @@ static int synaptics_ts_probe(struct i2c_client *client,
 
 		version_is_s3508 = 1;
 	}
+
+	if (version_is_s3508)
+		F12_2D_DATA04 = 0x0008;
+	else
+		F12_2D_DATA04 = 0x000A;
+
+	if (version_is_s3508)
+		F12_2D_DATA15 = 0x0009;
+	else
+		F12_2D_DATA15 = 0x000C;
 
 	strlcpy(ts->test_limit_name, "tp/14049/14049_Limit_jdi.img",
 	sizeof(ts->test_limit_name));

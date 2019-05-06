@@ -971,6 +971,10 @@ unsigned char addr, unsigned short length, unsigned char *data)
 		},
 	};
 	buf = addr & 0xFF;
+
+	if (likely(!ts_g->is_suspended))
+		return i2c_transfer(client->adapter, msg, 2);
+
 	for (retry = 0; retry < 2; retry++) {
 		if (i2c_transfer(client->adapter, msg, 2) == 2) {
 			retval = length;
@@ -1007,6 +1011,9 @@ unsigned char addr, unsigned short length, unsigned char const *data)
 
 	buf[0] = addr & 0xff;
 	memcpy(&buf[1], &data[0], length);
+
+	if (likely(!ts_g->is_suspended))
+		return i2c_transfer(client->adapter, msg, 1);
 
 	for (retry = 0; retry < 2; retry++) {
 		if (i2c_transfer(client->adapter, msg, 1) == 1) {

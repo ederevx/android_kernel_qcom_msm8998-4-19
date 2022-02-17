@@ -19,9 +19,7 @@
 #ifndef	__ASM_INSN_H
 #define	__ASM_INSN_H
 #include <linux/types.h>
-
-/* A64 instructions are always 32 bits. */
-#define	AARCH64_INSN_SIZE		4
+#include <asm/insn-def.h>
 
 #ifndef __ASSEMBLY__
 /*

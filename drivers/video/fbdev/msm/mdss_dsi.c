@@ -3075,6 +3075,38 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 				&ctrl_pdata->dba_work, HZ);
 		}
 		break;
+	case MDSS_EVENT_PANEL_SET_SRGB_MODE:
+		mdss_livedisplay_set_panel_mode(ctrl_pdata,
+				DSI_PANEL_MODE_SRGB, (int)(unsigned long) arg);
+		break;
+	case MDSS_EVENT_PANEL_GET_SRGB_MODE:
+		rc = mdss_livedisplay_get_panel_mode(ctrl_pdata, 
+				DSI_PANEL_MODE_SRGB);
+		break;
+	case MDSS_EVENT_PANEL_SET_DCI_P3_MODE:
+		mdss_livedisplay_set_panel_mode(ctrl_pdata,
+				DSI_PANEL_MODE_DCI_P3, (int)(unsigned long) arg);
+		break;
+	case MDSS_EVENT_PANEL_GET_DCI_P3_MODE:
+		rc = mdss_livedisplay_get_panel_mode(ctrl_pdata, 
+				DSI_PANEL_MODE_DCI_P3);
+		break;
+	case MDSS_EVENT_PANEL_SET_ONEPLUS_MODE:
+		mdss_livedisplay_set_panel_mode(ctrl_pdata,
+				DSI_PANEL_MODE_ONEPLUS, (int)(unsigned long) arg);
+		break;
+	case MDSS_EVENT_PANEL_GET_ONEPLUS_MODE:
+		rc = mdss_livedisplay_get_panel_mode(ctrl_pdata, 
+				DSI_PANEL_MODE_ONEPLUS);
+		break;
+	case MDSS_EVENT_PANEL_SET_ADAPTION_MODE:
+		mdss_livedisplay_set_panel_mode(ctrl_pdata,
+				DSI_PANEL_MODE_ADAPTION, (int)(unsigned long) arg);
+		break;
+	case MDSS_EVENT_PANEL_GET_ADAPTION_MODE:
+		rc = mdss_livedisplay_get_panel_mode(ctrl_pdata, 
+				DSI_PANEL_MODE_ADAPTION);
+		break;
 	case MDSS_EVENT_DSI_TIMING_DB_CTRL:
 		mdss_dsi_timing_db_ctrl(ctrl_pdata, (int)(unsigned long)arg);
 		break;

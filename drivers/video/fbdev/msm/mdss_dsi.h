@@ -576,6 +576,8 @@ struct mdss_dsi_ctrl_pdata {
 	int disp_vci_en_gpio;
 	int disp_poc_en_gpio;
 
+	bool is_panel_on;
+	bool setting_mode_loaded;
 
 	bool bl_high2bit;
 	bool high_brightness_panel;

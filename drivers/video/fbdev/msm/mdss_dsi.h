@@ -578,6 +578,7 @@ struct mdss_dsi_ctrl_pdata {
 
 	bool is_panel_on;
 	bool setting_mode_loaded;
+	struct mutex panel_mode_lock;
 
 	bool bl_high2bit;
 	bool high_brightness_panel;

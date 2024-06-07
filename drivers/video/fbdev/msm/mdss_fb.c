@@ -927,7 +927,7 @@ static ssize_t mdss_fb_get_srgb_mode(struct device *dev,
 
 	level = mdss_fb_send_panel_event(mfd, MDSS_EVENT_PANEL_GET_SRGB_MODE,
 			NULL);
-	ret = scnprintf(buf, PAGE_SIZE, "mdss_fb: srgb mode = %d\n", level);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", level);
 	return ret;
 }
 
@@ -965,7 +965,7 @@ static ssize_t mdss_fb_get_dci_p3_mode(struct device *dev,
 
 	level = mdss_fb_send_panel_event(mfd, MDSS_EVENT_PANEL_GET_DCI_P3_MODE,
 			NULL);
-	ret = scnprintf(buf, PAGE_SIZE, "mdss_fb: dci-p3 mode = %d\n", level);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", level);
 	return ret;
 }
 
@@ -1003,7 +1003,7 @@ static ssize_t mdss_fb_get_oneplus_mode(struct device *dev,
 
 	level = mdss_fb_send_panel_event(mfd, MDSS_EVENT_PANEL_GET_ONEPLUS_MODE,
 			NULL);
-	ret = scnprintf(buf, PAGE_SIZE, "mdss_fb: oneplus mode = %d\n", level);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", level);
 	return ret;
 }
 
@@ -1041,7 +1041,7 @@ static ssize_t mdss_fb_get_adaption_mode(struct device *dev,
 
 	level = mdss_fb_send_panel_event(mfd,
 		MDSS_EVENT_PANEL_GET_ADAPTION_MODE, NULL);
-	ret = scnprintf(buf, PAGE_SIZE, "mdss_fb: adaption mode = %d\n", level);
+	ret = scnprintf(buf, PAGE_SIZE, "%d\n", level);
 	return ret;
 }
 

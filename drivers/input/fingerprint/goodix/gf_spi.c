@@ -40,6 +40,7 @@
 #include <linux/fb.h>
 #include <linux/pm_qos.h>
 #include <linux/cpufreq.h>
+#include <linux/suspend.h>
 #ifdef OEM_DEBUG_SUPPORT
 #include <linux/oneplus/boot_mode.h>
 #endif
@@ -57,7 +58,7 @@
 #define VER_MINOR   2
 #define PATCH_LEVEL 1
 
-#define WAKELOCK_HOLD_TIME 500 /* in ms */
+#define WAKELOCK_HOLD_TIME 1000 /* in ms */
 
 #define GF_SPIDEV_NAME     "goodix,fingerprint"
 /*device name after register in charater*/
@@ -93,24 +94,30 @@ struct gf_key_map maps[] = {
 #endif
 };
 
+static DEFINE_SPINLOCK(gf_irq_lock);
+
 static void gf_enable_irq(struct gf_dev *gf_dev)
 {
+	spin_lock(&gf_irq_lock);
 	if (gf_dev->irq_enabled) {
 		pr_warn("IRQ has been enabled.\n");
 	} else {
 		enable_irq(gf_dev->irq);
 		gf_dev->irq_enabled = 1;
 	}
+	spin_unlock(&gf_irq_lock);
 }
 
 static void gf_disable_irq(struct gf_dev *gf_dev)
 {
+	spin_lock(&gf_irq_lock);
 	if (gf_dev->irq_enabled) {
 		gf_dev->irq_enabled = 0;
 		disable_irq(gf_dev->irq);
 	} else {
 		pr_warn("IRQ has been disabled.\n");
 	}
+	spin_unlock(&gf_irq_lock);
 }
 
 #ifdef AP_CONTROL_CLK
@@ -496,6 +503,7 @@ static irqreturn_t gf_irq(int irq, void *handle)
 	char temp = GF_NET_EVENT_IRQ;
 
 	__pm_wakeup_event(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_TIME));
+	pm_system_wakeup();
 	sendnlmsg(&temp);
 #elif defined GF_FASYNC
 	struct gf_dev *gf_dev = &gf;
@@ -625,6 +633,32 @@ static const struct attribute_group attribute_group = {
 	.attrs = attributes,
 };
 
+static void set_fingerprint_hal_nice(int nice)
+{
+	struct task_struct *p;
+
+	read_lock(&tasklist_lock);
+
+	for_each_process(p) {
+		if (!memcmp(p->comm, "fingerprint@2.1", sizeof("fingerprint@2.1"))) {
+			set_user_nice(p, nice);
+			break;
+		}
+	}
+	read_unlock(&tasklist_lock);
+}
+
+static void blank_fingerprint_hal_nice(struct work_struct *work)
+{
+	struct gf_dev *gf_dev = &gf;
+
+	if (gf_dev->fb_black)
+		set_fingerprint_hal_nice(MIN_NICE);
+	else
+		set_fingerprint_hal_nice(0);
+}
+DECLARE_WORK(fp_hal_work, blank_fingerprint_hal_nice);
+
 static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 		unsigned long val, void *data)
 {
@@ -652,6 +686,7 @@ static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 					kill_fasync(&gf_dev->async, SIGIO, POLL_IN);
 				}
 #endif
+				queue_work(system_highpri_wq, &fp_hal_work);
 			}
 			break;
 		case FB_BLANK_UNBLANK:
@@ -665,6 +700,7 @@ static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 					kill_fasync(&gf_dev->async, SIGIO, POLL_IN);
 				}
 #endif
+				queue_work(system_highpri_wq, &fp_hal_work);
 			}
 			break;
 		default:

@@ -127,6 +127,33 @@ static int get_dev_status(struct device *dev, struct devfreq_dev_status *status)
 
 }
 
+static int spdm_read_u32(struct platform_device *pdev, const char *name,
+			 u32 *value)
+{
+	int ret;
+
+	ret = of_property_read_u32(pdev->dev.of_node, name, value);
+	if (ret)
+		dev_err(&pdev->dev, "missing or invalid %s: %d\n", name, ret);
+
+	return ret;
+}
+
+static int spdm_read_u32_array(struct platform_device *pdev, const char *name,
+			       u32 *values, size_t count)
+{
+	int ret;
+
+	ret = of_property_read_u32_array(pdev->dev.of_node, name, values,
+					 count);
+	if (ret)
+		dev_err(&pdev->dev,
+			"missing or invalid %s (%zu values): %d\n",
+			name, count, ret);
+
+	return ret;
+}
+
 static int populate_config_data(struct spdm_data *data,
 				struct platform_device *pdev)
 {
@@ -134,72 +161,73 @@ static int populate_config_data(struct spdm_data *data,
 	struct device_node *node = pdev->dev.of_node;
 	struct property *prop = 0;
 
-	ret = of_property_read_u32(node, "qcom,max-vote",
-				   &data->config_data.max_vote);
+	ret = spdm_read_u32(pdev, "qcom,max-vote",
+			    &data->config_data.max_vote);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,bw-upstep",
-				   &data->config_data.upstep);
+	ret = spdm_read_u32(pdev, "qcom,bw-upstep",
+			    &data->config_data.upstep);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,bw-dwnstep",
-				   &data->config_data.downstep);
+	ret = spdm_read_u32(pdev, "qcom,bw-dwnstep",
+			    &data->config_data.downstep);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,alpha-up",
-				   &data->config_data.aup);
+	ret = spdm_read_u32(pdev, "qcom,alpha-up", &data->config_data.aup);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,alpha-down",
-				   &data->config_data.adown);
+	ret = spdm_read_u32(pdev, "qcom,alpha-down",
+			    &data->config_data.adown);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,bucket-size",
-				   &data->config_data.bucket_size);
+	ret = spdm_read_u32(pdev, "qcom,bucket-size",
+			    &data->config_data.bucket_size);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32_array(node, "qcom,pl-freqs",
-					 data->config_data.pl_freqs,
-					 SPDM_PL_COUNT - 1);
+	ret = spdm_read_u32_array(pdev, "qcom,pl-freqs",
+				  data->config_data.pl_freqs,
+				  SPDM_PL_COUNT - 1);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32_array(node, "qcom,reject-rate",
-					 data->config_data.reject_rate,
-					 SPDM_PL_COUNT * 2);
+	ret = spdm_read_u32_array(pdev, "qcom,reject-rate",
+				  data->config_data.reject_rate,
+				  SPDM_PL_COUNT * 2);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32_array(node, "qcom,response-time-us",
-					 data->config_data.response_time_us,
-					 SPDM_PL_COUNT * 2);
+	ret = spdm_read_u32_array(pdev, "qcom,response-time-us",
+				  data->config_data.response_time_us,
+				  SPDM_PL_COUNT * 2);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32_array(node, "qcom,cci-response-time-us",
-					 data->config_data.cci_response_time_us,
-					 SPDM_PL_COUNT * 2);
+	ret = spdm_read_u32_array(pdev, "qcom,cci-response-time-us",
+				  data->config_data.cci_response_time_us,
+				  SPDM_PL_COUNT * 2);
 	if (ret)
 		return ret;
 
-	ret = of_property_read_u32(node, "qcom,max-cci-freq",
-				   &data->config_data.max_cci_freq);
+	ret = spdm_read_u32(pdev, "qcom,max-cci-freq",
+			    &data->config_data.max_cci_freq);
 	if (ret)
 		return ret;
-	ret = of_property_read_u32(node, "qcom,up-step-multp",
-				   &data->config_data.up_step_multp);
+	ret = spdm_read_u32(pdev, "qcom,up-step-multp",
+			    &data->config_data.up_step_multp);
 	if (ret)
 		return ret;
 
 	prop = of_find_property(node, "qcom,ports", 0);
-	if (!prop)
+	if (!prop) {
+		dev_err(&pdev->dev, "missing qcom,ports\n");
 		return -EINVAL;
+	}
 	data->config_data.num_ports = prop->length / sizeof(u32);
 	data->config_data.ports =
 	    devm_kzalloc(&pdev->dev, prop->length, GFP_KERNEL);
@@ -209,6 +237,7 @@ static int populate_config_data(struct spdm_data *data,
 					 data->config_data.ports,
 					 data->config_data.num_ports);
 	if (ret) {
+		dev_err(&pdev->dev, "invalid qcom,ports: %d\n", ret);
 		devm_kfree(&pdev->dev, data->config_data.ports);
 		data->config_data.ports = NULL;
 		return ret;
@@ -227,8 +256,7 @@ static int populate_spdm_data(struct spdm_data *data,
 	if (ret)
 		return ret;
 
-	ret =
-	    of_property_read_u32(node, "qcom,spdm-client", &data->spdm_client);
+	ret = spdm_read_u32(pdev, "qcom,spdm-client", &data->spdm_client);
 	if (ret)
 		goto no_client;
 
@@ -238,6 +266,7 @@ static int populate_spdm_data(struct spdm_data *data,
 
 	data->pdata = msm_bus_cl_get_pdata(pdev);
 	if (!data->pdata) {
+		dev_err(&pdev->dev, "failed to parse qcom,msm-bus data\n");
 		ret = -EINVAL;
 		goto no_pdata;
 	}
@@ -317,8 +346,10 @@ static int probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, data);
 
 	ret = populate_spdm_data(data, pdev);
-	if (ret)
+	if (ret) {
+		dev_err(&pdev->dev, "configuration failed: %d\n", ret);
 		goto bad_of;
+	}
 
 	desc.arg[0] = SPDM_CMD_GET_VERSION;
 	ext_status = spdm_ext_call(&desc, 1);
@@ -329,13 +360,15 @@ static int probe(struct platform_device *pdev)
 	}
 
 	if (desc.ret[0] < SPDM_TZ_VERSION) {
-		pr_err("%s: Version mismatch expected 0x%x got 0x%x", __func__,
-			SPDM_TZ_VERSION, (int)desc.arg[0]);
+		dev_err(&pdev->dev,
+			"version mismatch: expected 0x%x, got 0x%llx\n",
+			SPDM_TZ_VERSION, desc.ret[0]);
 		goto bad_of;
 	}
 
 	data->bus_scale_client_id = msm_bus_scale_register_client(data->pdata);
 	if (!data->bus_scale_client_id) {
+		dev_err(&pdev->dev, "MSM bus client registration failed\n");
 		ret = -EINVAL;
 		goto no_bus_scaling;
 	}
@@ -361,6 +394,7 @@ static int probe(struct platform_device *pdev)
 	    devfreq_add_device(&pdev->dev, data->profile, "spdm_bw_hyp", data);
 	if (IS_ERR(data->devfreq)) {
 		ret = PTR_ERR(data->devfreq);
+		dev_err(&pdev->dev, "devfreq registration failed: %d\n", ret);
 		goto no_spdm_device;
 	}
 

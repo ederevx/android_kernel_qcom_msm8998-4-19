@@ -498,6 +498,20 @@ static void cam_smmu_reset_iommu_table(enum cam_smmu_init_dir ops)
 	}
 }
 
+static void cam_smmu_reset_unpublished_cb(struct cam_context_bank_info *cb)
+{
+	int i;
+
+	mutex_destroy(&cb->lock);
+	memset(cb, 0, sizeof(*cb));
+	cb->handle = HANDLE_INIT;
+	cb->state = CAM_SMMU_DETACH;
+	INIT_LIST_HEAD(&cb->smmu_buf_list);
+	for (i = 0; i < CAM_SMMU_SID_MAX; i++)
+		cb->sids[i] = -1;
+	mutex_init(&cb->lock);
+}
+
 static int cam_smmu_check_handle_unique(int hdl)
 {
 	int i;
@@ -2253,8 +2267,10 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 
 	/* populate SID's for each cb */
 	rc = cam_smmu_populate_sids(dev, cb);
-	if (rc < 0)
+	if (rc < 0) {
 		pr_err("Error: failed to populate sids : %s\n", cb->name);
+		goto cb_init_fail;
+	}
 
 	/* Check if context bank supports scratch buffers */
 	if (of_property_read_bool(dev->of_node, "qcom,scratch-buf-support"))
@@ -2281,8 +2297,10 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 		CDBG("getting Arm SMMU ctx : %s\n", cb->name);
 
 	rc = cam_smmu_setup_cb(cb, ctx);
-	if (rc < 0)
+	if (rc < 0) {
 		pr_err("Error: failed to setup cb : %s\n", cb->name);
+		goto cb_init_fail;
+	}
 
 	iommu_set_fault_handler(cb->domain,
 			cam_smmu_iommu_fault_handler,
@@ -2290,8 +2308,10 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 
 	if (iommu_cb_set.camera_secure_sid) {
 		rc = cam_smmu_attach(iommu_cb_set.cb_init_count);
-		if (rc)
+		if (rc) {
 			pr_err("Error: SMMU attach failed for %s\n", cb->name);
+			goto cb_init_fail;
+		}
 	}
 
 	/* increment count to next bank */
@@ -2302,6 +2322,10 @@ static int cam_populate_smmu_context_banks(struct device *dev,
 	return rc;
 
 cb_init_fail:
+	if (iommu_cb_set.cb_info &&
+		iommu_cb_set.cb_init_count < iommu_cb_set.cb_num)
+		cam_smmu_reset_unpublished_cb(
+			&iommu_cb_set.cb_info[iommu_cb_set.cb_init_count]);
 	mutex_unlock(&iommu_cb_set_lock);
 	return rc;
 }
@@ -2315,14 +2339,14 @@ static int cam_smmu_probe(struct platform_device *pdev)
 		rc = cam_alloc_smmu_context_banks(dev);
 		if (rc < 0)	{
 			pr_err("Error: allocating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 	}
 	if (of_device_is_compatible(dev->of_node, "qcom,msm-cam-smmu-cb")) {
 		rc = cam_populate_smmu_context_banks(dev, CAM_ARM_SMMU);
 		if (rc < 0) {
 			pr_err("Error: populating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 		return rc;
 	}
@@ -2330,7 +2354,7 @@ static int cam_smmu_probe(struct platform_device *pdev)
 		rc = cam_populate_smmu_context_banks(dev, CAM_QSMMU);
 		if (rc < 0) {
 			pr_err("Error: populating context banks\n");
-			return -ENOMEM;
+			return rc;
 		}
 		return rc;
 	}

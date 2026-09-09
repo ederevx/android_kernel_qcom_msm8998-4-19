@@ -2163,37 +2163,56 @@ static void spcom_unregister_chrdev(void)
 
 static int spcom_parse_rmb_dt(struct device_node *np)
 {
+	static const char * const required_props[] = {
+		"qcom,spcom-rmb-err-reg-addr",
+		"qcom,spcom-sp2soc-rmb-reg-addr",
+		"qcom,spcom-sp2soc-rmb-pbldone-bit",
+		"qcom,spcom-sp2soc-rmb-initdone-bit",
+		"qcom,spcom-soc2sp-rmb-reg-addr",
+		"qcom,spcom-soc2sp-rmb-sp-ssr-bit",
+	};
 	int ret;
+	size_t prop_index;
 	u32 sp2soc_rmb_pbldone_bit = 0;
 	u32 sp2soc_rmb_initdone_bit = 0;
 	u32 soc2sp_rmb_sp_ssr_bit = 0;
+
+	for (prop_index = 0; prop_index < ARRAY_SIZE(required_props);
+	     prop_index++)
+		if (!of_find_property(np, required_props[prop_index], NULL))
+			spcom_pr_err("missing DT property %s\n",
+				     required_props[prop_index]);
 
 	/* Read SP HLOS SCSR RMB IRQ register address */
 	ret = of_property_read_u32(np, "qcom,spcom-rmb-err-reg-addr",
 		&spcom_rmb_error_reg_addr);
 	if (ret < 0) {
-		pr_err("can't get rmb error reg addr\n");
+		spcom_pr_err("can't read qcom,spcom-rmb-err-reg-addr: %d\n",
+			     ret);
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "qcom,spcom-sp2soc-rmb-reg-addr",
 		&spcom_sp2soc_rmb_reg_addr);
 	if (ret < 0) {
-		spcom_pr_err("can't get sp2soc rmb reg addr\n");
+		spcom_pr_err("can't read qcom,spcom-sp2soc-rmb-reg-addr: %d\n",
+			     ret);
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "qcom,spcom-sp2soc-rmb-pbldone-bit",
 		&sp2soc_rmb_pbldone_bit);
 	if (ret < 0) {
-		spcom_pr_err("can't get sp2soc rmb pbl done bit\n");
+		spcom_pr_err("can't read qcom,spcom-sp2soc-rmb-pbldone-bit: %d\n",
+			     ret);
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "qcom,spcom-sp2soc-rmb-initdone-bit",
 		&sp2soc_rmb_initdone_bit);
 	if (ret < 0) {
-		spcom_pr_err("can't get sp2soc rmb sw init done bit\n");
+		spcom_pr_err("can't read qcom,spcom-sp2soc-rmb-initdone-bit: %d\n",
+			     ret);
 		return ret;
 	}
 
@@ -2204,14 +2223,16 @@ static int spcom_parse_rmb_dt(struct device_node *np)
 	ret = of_property_read_u32(np, "qcom,spcom-soc2sp-rmb-reg-addr",
 		&spcom_soc2sp_rmb_reg_addr);
 	if (ret < 0) {
-		spcom_pr_err("can't get soc2sp rmb reg addr\n");
+		spcom_pr_err("can't read qcom,spcom-soc2sp-rmb-reg-addr: %d\n",
+			     ret);
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "qcom,spcom-soc2sp-rmb-sp-ssr-bit",
 		&soc2sp_rmb_sp_ssr_bit);
 	if (ret < 0) {
-		spcom_pr_err("can't get soc2sp rmb SP SSR bit\n");
+		spcom_pr_err("can't read qcom,spcom-soc2sp-rmb-sp-ssr-bit: %d\n",
+			     ret);
 		return ret;
 	}
 

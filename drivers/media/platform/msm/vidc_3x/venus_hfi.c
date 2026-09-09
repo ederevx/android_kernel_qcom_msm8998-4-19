@@ -3840,12 +3840,13 @@ static int __init_resources(struct venus_hfi_device *device,
 	rc = __init_regulators(device);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to get all regulators\n");
-		return rc;
+		return -ENODEV;
 	}
 
 	rc = __init_clocks(device);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to init clocks\n");
+		rc = -ENODEV;
 		goto err_init_clocks;
 	}
 
@@ -3876,13 +3877,12 @@ static int __early_init_resources(struct venus_hfi_device *device,
 	rc = __init_regulators(device);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to get all regulators\n");
-		return -ENODEV;
+		return rc;
 	}
 
 	rc = __init_clocks(device);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to init clocks\n");
-		rc = -ENODEV;
 		goto err_init_clocks;
 	}
 

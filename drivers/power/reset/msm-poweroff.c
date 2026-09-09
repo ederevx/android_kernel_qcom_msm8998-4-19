@@ -654,6 +654,8 @@ static int msm_restart_probe(struct platform_device *pdev)
 
 	force_warm_reboot = of_property_read_bool(dev->of_node,
 						"qcom,force-warm-reboot");
+	if (force_warm_reboot)
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 
 	return 0;
 

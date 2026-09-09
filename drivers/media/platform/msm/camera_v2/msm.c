@@ -26,6 +26,7 @@
 #include <linux/iommu.h>
 #include <linux/platform_device.h>
 #include <linux/debugfs.h>
+#include <linux/msm-bus.h>
 #include <media/v4l2-fh.h>
 #include "msm.h"
 #include "msm_vb2.h"
@@ -1335,6 +1336,9 @@ static int msm_probe(struct platform_device *pdev)
 	struct msm_video_device *pvdev = NULL;
 	static struct dentry *cam_debugfs_root;
 	int rc = 0;
+
+	if (!msm_bus_scale_driver_ready())
+		return -EPROBE_DEFER;
 
 	msm_v4l2_dev = kzalloc(sizeof(*msm_v4l2_dev),
 		GFP_KERNEL);

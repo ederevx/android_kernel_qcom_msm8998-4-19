@@ -52,7 +52,7 @@
 		fpc,enable-on-boot;
 		fpc,enable-wakeup;
 		interrupt-parent = <&tlmm>;
-		interrupts = <121 0x0>;
+		interrupts = <121 IRQ_TYPE_EDGE_RISING>;
 		fpc,irq-gpio    = <&tlmm 121 0x0>;
 		fpc,enable-gpio = <&tlmm 25 0x0>;
 		vdd_ana-supply  = <&pm8998_l6>;

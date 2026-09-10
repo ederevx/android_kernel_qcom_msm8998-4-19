@@ -1,0 +1,163 @@
+/* Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+#include "msm8998-oneplus-common.dtsi"
+
+/* I/O */
+&soc {
+	pinctrl@03400000 {
+		oem_rf_cable_mux {
+			oem_rf_cable_active: oem_rf_cable_active {
+				mux {
+					pins = "gpio36";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio36";
+					drive-strength = <2>;
+					bias-pull-up;
+				};
+			};
+
+			oem_rf_cable_suspend: oem_rf_cable_suspend {
+				mux {
+					pins = "gpio36";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio36";
+					drive-strength = <2>;
+					bias-pull-up;
+				};
+
+			};
+		};
+	};
+
+	oem_rf_cable {
+		compatible = "oem,rf_cable";
+		interrupt-parent = <&tlmm>;
+		rf,cable-gpio    = <&tlmm 36 0>;
+		pinctrl-names = "oem_rf_cable_active",
+				"oem_rf_cable_suspend";
+		pinctrl-0 = <&oem_rf_cable_active >;
+		pinctrl-1 = <&oem_rf_cable_suspend>;
+	};
+
+	/* Fingerprint */
+	pinctrl@03400000 {
+		goodixfp_enable_init: goodixfp_enable_init {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio65";
+				drive-strength = <8>;
+				bias-pull-up;
+				output-high;
+			};
+		};
+
+		goodixfp_disable_init: goodixfp_disable_init {
+			mux {
+				pins = "gpio65";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio65";
+				drive-strength = <8>;
+				bias-pull-up;
+				output-low;
+			};
+		};
+
+		goodixfp_irq_init: goodixfp_irq_init {
+			mux {
+				pins = "gpio121";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio121";
+				drive-strength = <2>;
+				bias-disable;
+				input-enable;
+			};
+		};
+	};
+
+	goodix_fp {
+		compatible = "goodix,fingerprint";
+		interrupt-parent = <&tlmm>;
+		fp-gpio-irq = <&tlmm 121 0x00>;
+		fp-gpio-reset = <&tlmm 75 0x00>;
+		fp-gpio-enable = <&tlmm 65 0x00>;
+		fp-gpio-turn-on = <&tlmm 25 0x00>;
+		oem,dumpling;
+
+		pinctrl-names = "fp_en_init", "fp_dis_init",  "fp_enable";
+
+		pinctrl-0 = <&goodixfp_enable_init &goodixfp_irq_init>;
+		pinctrl-1 = <&goodixfp_disable_init>;
+		pinctrl-2 = <&fp_enable>;
+	};
+};
+
+/* Display */
+&i2c_5 {
+	synaptics-rmi-ts@20 {
+		status = "ok";
+		synaptics,tx-rx-num = <15 30>;
+		synaptics,display-coords = <1080 2160>;
+		synaptics,panel-coords = <1080 2160>;
+		oem,support_1080x2160_tp;
+	};
+};
+
+/* Audio */
+&soc {
+	sound-9335 {
+		status = "ok";
+		op,project_17801;
+		qcom,audio-routing =
+			"AIF4 VI", "MCLK",
+			"RX_BIAS", "MCLK",
+			"MADINPUT", "MCLK",
+			"AMIC2", "MIC BIAS2",
+			"MIC BIAS2", "Headset Mic",
+			"AMIC3", "MIC BIAS3",
+			"MIC BIAS3", "Analog Mic3",
+			"AMIC4", "MIC BIAS1",
+			"MIC BIAS1", "Analog Mic4",
+			"AMIC5", "MIC BIAS4",
+			"MIC BIAS4", "Analog Mic5",
+			"AMIC6", "MIC BIAS4",
+			"MIC BIAS4", "Analog Mic6",
+			"DMIC0", "MIC BIAS1",
+			"MIC BIAS1", "Digital Mic0",
+			"DMIC1", "MIC BIAS1",
+			"MIC BIAS1", "Digital Mic1",
+			"DMIC2", "MIC BIAS4",
+			"MIC BIAS4", "Digital Mic2",
+			"DMIC3", "MIC BIAS4",
+			"MIC BIAS4", "Digital Mic3",
+			"DMIC4", "MIC BIAS3",
+			"MIC BIAS3", "Digital Mic4",
+			"DMIC5", "MIC BIAS3",
+			"MIC BIAS3", "Digital Mic5";
+	};
+};

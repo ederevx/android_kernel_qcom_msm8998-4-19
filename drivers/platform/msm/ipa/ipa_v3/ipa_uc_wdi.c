@@ -1064,61 +1064,6 @@ static int ipa_release_uc_smmu_mappings(enum ipa_client_type client)
 	return ret;
 }
 
-static void ipa_save_uc_smmu_mapping_pa(int res_idx, phys_addr_t pa,
-		unsigned long iova, size_t len)
-{
-	IPADBG("--res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
-		&pa, iova, len);
-	wdi_res[res_idx].res = kzalloc(sizeof(*wdi_res[res_idx].res),
-		GFP_KERNEL);
-	if (!wdi_res[res_idx].res) {
-		WARN_ON(1);
-		return;
-	}
-	wdi_res[res_idx].nents = 1;
-	wdi_res[res_idx].valid = true;
-	wdi_res[res_idx].res->pa = rounddown(pa, PAGE_SIZE);
-	wdi_res[res_idx].res->iova = rounddown(iova, PAGE_SIZE);
-	wdi_res[res_idx].res->size = roundup(len + pa - rounddown(pa,
-				PAGE_SIZE), PAGE_SIZE);
-	IPADBG("res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
-			&wdi_res[res_idx].res->pa, wdi_res[res_idx].res->iova,
-			wdi_res[res_idx].res->size);
-}
-static void ipa_save_uc_smmu_mapping_sgt(int res_idx, struct sg_table *sgt,
-		unsigned long iova)
-{
-	int i;
-	struct scatterlist *sg;
-	unsigned long curr_iova = iova;
-
-	if (!sgt) {
-		IPAERR("Bad parameters, scatter / gather list is NULL\n");
-		return;
-	}
-
-	wdi_res[res_idx].res = kcalloc(sgt->nents,
-		sizeof(*wdi_res[res_idx].res),
-			GFP_KERNEL);
-	if (!wdi_res[res_idx].res) {
-		WARN_ON(1);
-		return;
-	}
-	wdi_res[res_idx].nents = sgt->nents;
-	wdi_res[res_idx].valid = true;
-	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
-		/* directly get sg_tbl PA from wlan */
-		wdi_res[res_idx].res[i].pa = sg->dma_address;
-		wdi_res[res_idx].res[i].iova = curr_iova;
-		wdi_res[res_idx].res[i].size = PAGE_ALIGN(sg->offset +
-				sg->length);
-		IPADBG("res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
-			&wdi_res[res_idx].res[i].pa,
-			wdi_res[res_idx].res[i].iova,
-			wdi_res[res_idx].res[i].size);
-		curr_iova += wdi_res[res_idx].res[i].size;
-	}
-}
 int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		phys_addr_t pa, struct sg_table *sgt, size_t len, bool device,
 		unsigned long *iova)
@@ -1155,6 +1100,7 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		return -EINVAL;
 	}
 }
+
 void ipa3_release_wdi3_gsi_smmu_mappings(u8 dir)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_AP);
@@ -1184,6 +1130,63 @@ void ipa3_release_wdi3_gsi_smmu_mappings(u8 dir)
 
 	if (ipa3_ctx->wdi_map_cnt == 0)
 		cb->next_addr = cb->va_end;
+}
+
+static void ipa_save_uc_smmu_mapping_pa(int res_idx, phys_addr_t pa,
+		unsigned long iova, size_t len)
+{
+	IPADBG("--res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
+		&pa, iova, len);
+	wdi_res[res_idx].res = kzalloc(sizeof(*wdi_res[res_idx].res),
+		GFP_KERNEL);
+	if (!wdi_res[res_idx].res) {
+		WARN_ON(1);
+		return;
+	}
+	wdi_res[res_idx].nents = 1;
+	wdi_res[res_idx].valid = true;
+	wdi_res[res_idx].res->pa = rounddown(pa, PAGE_SIZE);
+	wdi_res[res_idx].res->iova = rounddown(iova, PAGE_SIZE);
+	wdi_res[res_idx].res->size = roundup(len + pa - rounddown(pa,
+				PAGE_SIZE), PAGE_SIZE);
+	IPADBG("res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
+			&wdi_res[res_idx].res->pa, wdi_res[res_idx].res->iova,
+			wdi_res[res_idx].res->size);
+}
+
+static void ipa_save_uc_smmu_mapping_sgt(int res_idx, struct sg_table *sgt,
+		unsigned long iova)
+{
+	int i;
+	struct scatterlist *sg;
+	unsigned long curr_iova = iova;
+
+	if (!sgt) {
+		IPAERR("Bad parameters, scatter / gather list is NULL\n");
+		return;
+	}
+
+	wdi_res[res_idx].res = kcalloc(sgt->nents,
+		sizeof(*wdi_res[res_idx].res),
+			GFP_KERNEL);
+	if (!wdi_res[res_idx].res) {
+		WARN_ON(1);
+		return;
+	}
+	wdi_res[res_idx].nents = sgt->nents;
+	wdi_res[res_idx].valid = true;
+	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
+		/* directly get sg_tbl PA from wlan */
+		wdi_res[res_idx].res[i].pa = sg->dma_address;
+		wdi_res[res_idx].res[i].iova = curr_iova;
+		wdi_res[res_idx].res[i].size = PAGE_ALIGN(sg->offset +
+				sg->length);
+		IPADBG("res_idx=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", res_idx,
+			&wdi_res[res_idx].res[i].pa,
+			wdi_res[res_idx].res[i].iova,
+			wdi_res[res_idx].res[i].size);
+		curr_iova += wdi_res[res_idx].res[i].size;
+	}
 }
 
 int ipa_create_gsi_smmu_mapping(int res_idx, bool wlan_smmu_en,

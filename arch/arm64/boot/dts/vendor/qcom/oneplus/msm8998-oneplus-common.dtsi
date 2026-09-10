@@ -154,7 +154,7 @@
 			label = "hallsensor_key";
 			gpios = <&tlmm 124 1>;
 			interrupt-parent = <&tlmm>;
-			interrupts = <124 0x0>;
+			interrupts = <124 IRQ_TYPE_EDGE_BOTH>;
 			linux,input-type = <5>;
 			linux,code = <0>;
 			gpio-key,wakeup;
@@ -2124,7 +2124,7 @@
 		nxp,dev_name = "nq-nci";
 		reg = <0x28>;
 		interrupt-parent = <&tlmm>;
-		interrupts = <92 0>;
+		interrupts = <92 IRQ_TYPE_LEVEL_HIGH>;
 		nxp,irq_gpio = <&tlmm 92 0x00>;
 		nxp,dwld_en = <&tlmm 93 0x00>;
 		nxp,ven = <&tlmm 12 0x00>;

@@ -1,0 +1,34 @@
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/* Display */
+&mdss_dsi_active {
+	mux {
+		pins = "gpio94", "gpio21", "gpio62";
+	};
+    config {
+		pins = "gpio94", "gpio21", "gpio62";
+	};
+};
+
+&mdss_dsi_suspend {
+	mux {
+		pins = "gpio94", "gpio21", "gpio62";
+	};
+	config {
+		pins = "gpio94", "gpio21", "gpio62";
+	};
+};
+
+&mdss_dsi0 {
+	qcom,dsi-pref-prim-pan = <&dsi_samsung_s6e3fa5_1080p_cmd>;
+};

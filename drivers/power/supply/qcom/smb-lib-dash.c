@@ -582,7 +582,7 @@ int update_dash_unplug_status(void)
 	rc = smblib_get_prop_usb_voltage_now(g_chg, &vbus_val);
 	if (rc < 0)
 		pr_err("failed to read usb_voltage rc=%d\n", rc);
-	else if (vbus_val.intval <= 2500) {
+	else if (vbus_val.intval / 1000 <= 2500) {
 		op_handle_usb_plugin(g_chg);
 		smblib_update_usb_type(g_chg);
 		power_supply_changed(g_chg->usb_psy);
@@ -704,7 +704,7 @@ int op_handle_switcher_power_ok(void)
 	rc = smblib_get_prop_usb_voltage_now(g_chg, &vbus_val);
 	if (rc < 0) {
 		pr_err("fail to read usb_voltage rc=%d\n", rc);
-	} else if (vbus_val.intval >= 2500) {
+	} else if (vbus_val.intval / 1000 >= 2500) {
 		pr_err("vbus_val.intval=%d\n", vbus_val.intval);
 		vote(g_chg->usb_icl_votable, BOOST_BACK_VOTER, true, 0);
 		schedule_delayed_work(&g_chg->recovery_suspend_work,
@@ -982,7 +982,7 @@ static void op_chek_apsd_done_work(struct work_struct *work)
 		pr_info("failed to read usb_voltage rc=%d\n", rc);
 		return;
 	}
-	if (vbus_val.intval < 2500) {
+	if (vbus_val.intval / 1000 < 2500) {
 		pr_info("vbus less 2.5v\n");
 		chg->ck_apsd_count = 0;
 		return;
@@ -2055,7 +2055,7 @@ static void op_heartbeat_work(struct work_struct *work)
 	rc = smblib_get_prop_usb_voltage_now(chg, &vbus_val);
 	if (rc < 0) {
 		pr_err("failed to read usb_voltage rc=%d\n", rc);
-		vbus_val.intval = CHG_VOLTAGE_NORMAL;
+		vbus_val.intval = CHG_VOLTAGE_NORMAL * 1000;
 	}
 
 	charger_present = is_usb_present(chg);
@@ -2333,13 +2333,14 @@ int get_prop_chg_protect_status(struct smb_charger *chg)
 	rc = smblib_get_prop_usb_voltage_now(chg, &vbus_val);
 	if (rc < 0) {
 		pr_err("failed to read usb_voltage rc=%d\n", rc);
-		vbus_val.intval = CHG_VOLTAGE_NORMAL;
+		vbus_val.intval = CHG_VOLTAGE_NORMAL * 1000;
 	}
 
 	temp = get_prop_batt_temp(chg);
 	batt_present = get_prop_batt_present(chg);
 	temp_region = op_battery_temp_region_get(chg);
-	if (chg->chg_ovp && vbus_val.intval >= CHG_SOFT_OVP_MV - 100)
+	if (chg->chg_ovp &&
+			vbus_val.intval / 1000 >= CHG_SOFT_OVP_MV - 100)
 		return PROTECT_CHG_OVP;
 	else if (!batt_present || BATT_REMOVE_TEMP > temp)
 		return  PROTECT_BATT_MISSING;

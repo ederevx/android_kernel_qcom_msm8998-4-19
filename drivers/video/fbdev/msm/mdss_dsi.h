@@ -578,6 +578,7 @@ struct mdss_dsi_ctrl_pdata {
 
 
 	bool bl_high2bit;
+	bool high_brightness_panel;
 
 	struct kobject *kobj;
 	int fb_node;

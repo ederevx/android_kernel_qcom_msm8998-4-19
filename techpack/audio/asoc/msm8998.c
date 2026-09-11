@@ -7113,7 +7113,8 @@ static int msm_configure_tfa98xx(struct snd_soc_card *card)
 
 	for (i = 0; i < card->num_links; i++) {
 		link = &card->dai_link[i];
-		if (link->id != MSM_BACKEND_DAI_QUATERNARY_MI2S_RX)
+		if (!link->no_pcm ||
+		    link->id != MSM_BACKEND_DAI_QUATERNARY_MI2S_RX)
 			continue;
 
 		link->codec_name = "tfa98xx.9-0036";

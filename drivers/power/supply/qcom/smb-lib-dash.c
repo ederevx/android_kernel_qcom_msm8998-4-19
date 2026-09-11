@@ -46,17 +46,8 @@ const union power_supply_propval otg_off = {0,};
 
 struct smb_charger *g_chg;
 
-/*
- * SOC-backup register access via the PMIC PON regmap. pm_pon is never
- * populated in this tree (no PON driver registers it via the unrelated,
- * not-imported op_pm8998_regmap_register()), so op_read()/op_masked_write()
- * below are permanently harmless no-ops -- SOC just won't be persisted
- * across reboots through this path.
- */
-struct qpnp_pon {
-	struct regmap *regmap;
-};
-static struct qpnp_pon *pm_pon;
+/* SOC-backup register access via the primary PMIC PON regmap. */
+static struct regmap *pm_pon_regmap;
 
 static struct external_battery_gauge *fast_charger;
 char dump_val[2048];
@@ -2156,8 +2147,8 @@ static int op_read(struct smb_charger *chg, u16 addr, u8 *val)
 	unsigned int temp;
 	int rc = 0;
 
-	if (pm_pon && pm_pon->regmap) {
-		rc = regmap_read(pm_pon->regmap, addr, &temp);
+	if (pm_pon_regmap) {
+		rc = regmap_read(pm_pon_regmap, addr, &temp);
 		if (rc >= 0)
 			*val = (u8)temp;
 	}
@@ -2183,12 +2174,12 @@ int op_masked_write(struct smb_charger *chg, u16 addr, u8 mask, u8 val)
 {
 	int rc = 0;
 
-	if (pm_pon && pm_pon->regmap) {
+	if (pm_pon_regmap) {
 		mutex_lock(&chg->write_lock);
-		rc = regmap_update_bits(pm_pon->regmap, addr, mask, val);
+		rc = regmap_update_bits(pm_pon_regmap, addr, mask, val);
 		mutex_unlock(&chg->write_lock);
 	} else {
-		pr_err("pm_pon is NULL\n");
+		pr_err("PMIC PON regmap is NULL\n");
 	}
 	return rc;
 }
@@ -2375,6 +2366,14 @@ void fastcharge_information_register(struct external_battery_gauge *fast_chg)
 	} else {
 		fast_charger = fast_chg;
 	}
+}
+
+void op_pm8998_regmap_register(struct regmap *regmap)
+{
+	if (pm_pon_regmap)
+		pr_err("multiple PMIC PON regmaps registered\n");
+
+	pm_pon_regmap = regmap;
 }
 
 void fastcharge_information_unregister(struct external_battery_gauge *fast_chg)

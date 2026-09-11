@@ -97,7 +97,8 @@ enum batt_status_type {
 	BATT_STATUS_INVALID_v1 = BATT_STATUS_REMOVED,
 	BATT_STATUS_INVALID
 };
-//void op_pm8998_regmap_register(struct qpnp_pon *pon);
+
+void op_pm8998_regmap_register(struct regmap *regmap);
 
 void regsister_notify_usb_enumeration_status(
 	struct notify_usb_enumeration_status *event);

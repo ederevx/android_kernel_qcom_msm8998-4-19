@@ -94,30 +94,30 @@ struct gf_key_map maps[] = {
 #endif
 };
 
-static DEFINE_SPINLOCK(gf_irq_lock);
+static DEFINE_MUTEX(gf_irq_lock);
 
 static void gf_enable_irq(struct gf_dev *gf_dev)
 {
-	spin_lock(&gf_irq_lock);
+	mutex_lock(&gf_irq_lock);
 	if (gf_dev->irq_enabled) {
 		pr_warn("IRQ has been enabled.\n");
 	} else {
 		enable_irq(gf_dev->irq);
 		gf_dev->irq_enabled = 1;
 	}
-	spin_unlock(&gf_irq_lock);
+	mutex_unlock(&gf_irq_lock);
 }
 
 static void gf_disable_irq(struct gf_dev *gf_dev)
 {
-	spin_lock(&gf_irq_lock);
+	mutex_lock(&gf_irq_lock);
 	if (gf_dev->irq_enabled) {
 		gf_dev->irq_enabled = 0;
 		disable_irq(gf_dev->irq);
 	} else {
 		pr_warn("IRQ has been disabled.\n");
 	}
-	spin_unlock(&gf_irq_lock);
+	mutex_unlock(&gf_irq_lock);
 }
 
 #ifdef AP_CONTROL_CLK
@@ -504,7 +504,7 @@ static irqreturn_t gf_irq(int irq, void *handle)
 
 	__pm_wakeup_event(&fp_wakelock, msecs_to_jiffies(WAKELOCK_HOLD_TIME));
 	pm_system_wakeup();
-	sendnlmsg(&temp);
+	sendnlmsg(&temp, sizeof(temp));
 #elif defined GF_FASYNC
 	struct gf_dev *gf_dev = &gf;
 
@@ -680,7 +680,7 @@ static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 				gf_dev->fb_black = 1;
 #if defined(GF_NETLINK_ENABLE)
 				temp = GF_NET_EVENT_FB_BLACK;
-				sendnlmsg(&temp);
+				sendnlmsg(&temp, sizeof(temp));
 #elif defined (GF_FASYNC)
 				if (gf_dev->async) {
 					kill_fasync(&gf_dev->async, SIGIO, POLL_IN);
@@ -694,7 +694,7 @@ static int goodix_fb_state_chg_callback(struct notifier_block *nb,
 				gf_dev->fb_black = 0;
 #if defined(GF_NETLINK_ENABLE)
 				temp = GF_NET_EVENT_FB_UNBLACK;
-				sendnlmsg(&temp);
+				sendnlmsg(&temp, sizeof(temp));
 #elif defined (GF_FASYNC)
 				if (gf_dev->async) {
 					kill_fasync(&gf_dev->async, SIGIO, POLL_IN);

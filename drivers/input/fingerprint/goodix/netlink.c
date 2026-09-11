@@ -16,33 +16,35 @@
 static int pid = -1;
 struct sock *gf_nl_sk = NULL;
 
-void sendnlmsg(char *message)
+void sendnlmsg(const void *message, size_t message_len)
 {
 	struct sk_buff *skb_1;
 	struct nlmsghdr *nlh;
-	int len = NLMSG_SPACE(MAX_MSGSIZE);
-	int slen = 0;
 	int ret = 0;
-	if (!message || !gf_nl_sk || !pid)
-		return ;
 
-	skb_1 = alloc_skb(len, GFP_KERNEL);
+	if (!message || !message_len || message_len > MAX_MSGSIZE ||
+	    !gf_nl_sk || pid <= 0)
+		return;
+
+	skb_1 = nlmsg_new(message_len, GFP_KERNEL);
 	if (!skb_1) {
 		pr_err("alloc_skb error\n");
 		return;
 	}
-	slen = strlen(message);
-	nlh = nlmsg_put(skb_1, 0, 0, 0, MAX_MSGSIZE, 0);
+	nlh = nlmsg_put(skb_1, 0, 0, 0, message_len, 0);
+	if (!nlh) {
+		kfree_skb(skb_1);
+		return;
+	}
 
 	NETLINK_CB(skb_1).portid = 0;
 	NETLINK_CB(skb_1).dst_group = 0;
 
-	message[slen] = '\0';
-	memcpy(NLMSG_DATA(nlh), message, slen+1);
+	memcpy(nlmsg_data(nlh), message, message_len);
 
 	ret = netlink_unicast(gf_nl_sk, skb_1, pid, MSG_DONTWAIT);
-	if (!ret)
-	pr_err("send msg failed ret 0x%x\n", ret);
+	if (ret < 0)
+		pr_err("send msg failed ret 0x%x\n", ret);
 }
 
 
@@ -50,18 +52,26 @@ void nl_data_ready(struct sk_buff *__skb)
 {
 	struct sk_buff *skb;
 	struct nlmsghdr *nlh;
-	char str[100];
-	skb = skb_get (__skb);
-	if(skb->len >= NLMSG_SPACE(0))
-	{
-		nlh = nlmsg_hdr(skb);
+	char str[MAX_MSGSIZE + 1];
+	size_t payload_len;
 
-		memcpy(str, NLMSG_DATA(nlh), sizeof(str));
-		pid = nlh->nlmsg_pid;
+	skb = skb_get(__skb);
+	if (skb->len < NLMSG_HDRLEN)
+		goto out;
 
-		kfree_skb(skb);
-	}
+	nlh = nlmsg_hdr(skb);
+	if (!nlmsg_ok(nlh, skb->len))
+		goto out;
 
+	payload_len = nlmsg_len(nlh);
+	if (!payload_len || payload_len > MAX_MSGSIZE)
+		goto out;
+
+	memcpy(str, nlmsg_data(nlh), payload_len);
+	str[payload_len] = '\0';
+	pid = nlh->nlmsg_pid;
+out:
+	kfree_skb(skb);
 }
 
 
@@ -95,4 +105,3 @@ void netlink_exit(void)
 
 	pr_info("self module exited\n");
 }
-

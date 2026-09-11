@@ -2470,6 +2470,11 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 		return rc;
 	}
 
+	if (chg->vbus_present) {
+		val->intval = true;
+		return rc;
+	}
+
 	rc = smblib_read(chg, POWER_PATH_STATUS_REG, &stat);
 	if (rc < 0) {
 		smblib_err(chg, "Couldn't read POWER_PATH_STATUS rc=%d\n",

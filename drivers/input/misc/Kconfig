@@ -885,4 +885,8 @@ config INPUT_SC27XX_VIBRA
 	  To compile this driver as a module, choose M here. The module will
 	  be called sc27xx_vibra.
 
+config TRI_STATE_KEY
+	bool "OnePlus tri-state slider support"
+	help
+	  Say Y here if you want tri-state slider support.
 endif

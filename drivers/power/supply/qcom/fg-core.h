@@ -477,7 +477,6 @@ struct fg_dev {
 	bool			profile_available;
 	enum prof_load_status	profile_load_status;
 	bool			battery_missing;
-	bool                    use_external_fg;
 	bool			fg_restarting;
 	bool			charge_full;
 	bool			recharge_soc_adjusted;
@@ -498,6 +497,7 @@ struct fg_dev {
 	struct work_struct	esr_filter_work;
 	struct alarm		esr_filter_alarm;
 	ktime_t			last_delta_temp_time;
+	void			(*notify_charger)(struct fg_dev *fg);
 };
 
 /* Debugfs data structures are below */

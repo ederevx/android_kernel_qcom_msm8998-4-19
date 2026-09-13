@@ -407,27 +407,31 @@ int remote_rmi4_i2c_write(unsigned short addr,
 {
 	int retval;
 	unsigned char retry;
-	unsigned char buf[length + 1];
+	unsigned char *buf;
 	struct i2c_client *i2c_client = remote_rmi4_get_i2c_client();
-	struct i2c_msg msg[] = {
-		{
-			.addr = i2c_client->addr,
-			.flags = 0,
-			.len = length + 1,
-			.buf = buf,
-		}
-	};
+	struct i2c_msg msg;
 
+	if (length > REG_ADDR_LIMIT)
+		return -EINVAL;
+
+	buf = kmalloc(length + 1, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	msg.addr = i2c_client->addr;
+	msg.flags = 0;
+	msg.len = length + 1;
+	msg.buf = buf;
 
 	retval = remote_rmit_set_page(addr);
 	if (retval < 0)
-		goto exit;
+		goto free_buf;
 
 	buf[0] = addr & 0xff;
 	memcpy(&buf[1], &data[0], length);
 
 	for (retry = 0; retry < 2; retry++) {
-		if (i2c_transfer(i2c_client->adapter, msg, 1) == 1) {
+		if (i2c_transfer(i2c_client->adapter, &msg, 1) == 1) {
 			retval = length;
 			break;
 		}
@@ -437,8 +441,10 @@ int remote_rmi4_i2c_write(unsigned short addr,
 	if (retry == 2)
 		retval = -EIO;
 
-exit:
 	remote_rmit_put_page();
+
+free_buf:
+	kfree(buf);
 
 	return retval;
 }
@@ -526,7 +532,7 @@ static ssize_t rmidev_read(struct file *filp, char __user *buf,
 		size_t count, loff_t *f_pos)
 {
 	ssize_t retval;
-	unsigned char tmpbuf[count + 1];
+	unsigned char *tmpbuf;
 	struct rmidev_data *dev_data = filp->private_data;
 
 	if (IS_ERR(dev_data)) {
@@ -540,6 +546,10 @@ static ssize_t rmidev_read(struct file *filp, char __user *buf,
 
 	if (count > (REG_ADDR_LIMIT - *f_pos))
 		count = REG_ADDR_LIMIT - *f_pos;
+
+	tmpbuf = kzalloc(count + 1, GFP_KERNEL);
+	if (!tmpbuf)
+		return -ENOMEM;
 
 	mutex_lock(dev_data->pdata->pmutex);
 	mutex_lock(&(dev_data->file_mutex));
@@ -559,6 +569,7 @@ static ssize_t rmidev_read(struct file *filp, char __user *buf,
 clean_up:
 	mutex_unlock(&(dev_data->file_mutex));
 	mutex_unlock(dev_data->pdata->pmutex);
+	kfree(tmpbuf);
 
 	return retval;
 }
@@ -575,7 +586,7 @@ static ssize_t rmidev_write(struct file *filp, const char __user *buf,
 		size_t count, loff_t *f_pos)
 {
 	ssize_t retval;
-	unsigned char tmpbuf[count + 1];
+	unsigned char *tmpbuf;
 	struct rmidev_data *dev_data = filp->private_data;
 
 	pr_err("synap %s\n", __func__);
@@ -592,8 +603,14 @@ static ssize_t rmidev_write(struct file *filp, const char __user *buf,
 	if (count > (REG_ADDR_LIMIT - *f_pos))
 		count = REG_ADDR_LIMIT - *f_pos;
 
-	if (copy_from_user(tmpbuf, buf, count))
+	tmpbuf = kzalloc(count + 1, GFP_KERNEL);
+	if (!tmpbuf)
+		return -ENOMEM;
+
+	if (copy_from_user(tmpbuf, buf, count)) {
+		kfree(tmpbuf);
 		return -EFAULT;
+	}
 
 	mutex_lock(dev_data->pdata->pmutex);
 	mutex_lock(&(dev_data->file_mutex));
@@ -608,6 +625,7 @@ static ssize_t rmidev_write(struct file *filp, const char __user *buf,
 
 	mutex_unlock(&(dev_data->file_mutex));
 	mutex_unlock(dev_data->pdata->pmutex);
+	kfree(tmpbuf);
 
 	return retval;
 }

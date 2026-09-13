@@ -3670,7 +3670,13 @@ static int fg_psy_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CAPACITY:
-		rc = fg_get_prop_capacity(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_soc)
+			pval->intval = external_fg->get_battery_soc();
+		else
+#endif
+			rc = fg_get_prop_capacity(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
 		rc = fg_get_prop_real_capacity(fg, &pval->intval);
@@ -3679,16 +3685,34 @@ static int fg_psy_get_property(struct power_supply *psy,
 		rc = fg_get_msoc_raw(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_mvolts)
+			pval->intval = external_fg->get_battery_mvolts();
+		else
+#endif
 		if (fg->battery_missing)
 			pval->intval = 3700000;
 		else
 			rc = fg_get_battery_voltage(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
-		rc = fg_get_battery_current(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_average_current)
+			pval->intval = external_fg->get_average_current();
+		else
+#endif
+			rc = fg_get_battery_current(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		rc = fg_get_battery_temp(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_temperature)
+			pval->intval = external_fg->get_battery_temperature();
+		else
+#endif
+			rc = fg_get_battery_temp(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_COLD_TEMP:
 		rc = fg_get_jeita_threshold(fg, JEITA_COLD, &pval->intval);

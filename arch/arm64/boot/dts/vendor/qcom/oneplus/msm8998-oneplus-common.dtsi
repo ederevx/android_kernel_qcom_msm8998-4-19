@@ -2120,6 +2120,8 @@
 };
 
 &i2c_6 { /* BLSP1 QUP6 (NFC) */
+	status = "okay";
+
 	/delete-node/ nq@28;
 
 	pn5xx@28 {

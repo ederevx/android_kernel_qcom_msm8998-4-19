@@ -56,7 +56,6 @@
 #include <linux/input/mt.h>
 
 #include "synaptics_redremote.h"
-#include <linux/project_info.h>
 #include "synaptics_baseline.h"
 
 /*----------------------Global Define--------------------------------*/
@@ -139,37 +138,71 @@ struct test_header {
 #define BITF (0x1 << 15)
 
 // Gesture flags
-#define GESTURE_NONE            BIT0
-#define GESTURE_DOUBLE_TAP      BIT1 // double tap
-#define GESTURE_DOWN_ARROW      BIT2 // V
-#define GESTURE_UP_ARROW        BIT3 // ^
-#define GESTURE_RIGHT_ARROW     BIT4 // >
-#define GESTURE_LEFT_ARROW      BIT5 // <
-#define GESTURE_CIRCLE          BIT6 // O
-#define GESTURE_DOUBLE_SWIPE    BIT7 // ||
-#define GESTURE_RIGHT_SWIPE     BIT8 // ->
-#define GESTURE_LEFT_SWIPE      BIT9 // <-
-#define GESTURE_DOWN_SWIPE      BITA // |v
-#define GESTURE_UP_SWIPE        BITB // |^
-#define GESTURE_M               BITC // M
-#define GESTURE_W               BITD // W
-#define GESTURE_S               BITE // S
+#define NONE_FLAG	         BIT0
+#define DOUBLE_TAP_FLAG      BIT1 // double tap
+#define DOWN_ARROW_FLAG      BIT2 // V
+#define UP_ARROW_FLAG        BIT3 // ^
+#define RIGHT_ARROW_FLAG     BIT4 // >
+#define LEFT_ARROW_FLAG      BIT5 // <
+#define CIRCLE_FLAG          BIT6 // O
+#define DOUBLE_SWIPE_FLAG    BIT7 // ||
+#define RIGHT_SWIPE_FLAG     BIT8 // ->
+#define LEFT_SWIPE_FLAG      BIT9 // <-
+#define DOWN_SWIPE_FLAG      BITA // |v
+#define UP_SWIPE_FLAG        BITB // |^
+#define M_FLAG               BITC // M
+#define W_FLAG               BITD // W
+#define S_FLAG               BITE // S
+
+// Gesture numbers
+#define GESTURE_NONE            0
+#define GESTURE_DOUBLE_TAP      1 // double tap
+#define GESTURE_DOWN_ARROW      2 // V
+#define GESTURE_UP_ARROW        3 // ^
+#define GESTURE_RIGHT_ARROW     4 // >
+#define GESTURE_LEFT_ARROW      5 // <
+#define GESTURE_CIRCLE          6 // O
+#define GESTURE_DOUBLE_SWIPE    7 // ||
+#define GESTURE_RIGHT_SWIPE     8 // ->
+#define GESTURE_LEFT_SWIPE      9 // <-
+#define GESTURE_DOWN_SWIPE      10 // |v
+#define GESTURE_UP_SWIPE        11 // |^
+#define GESTURE_M               12 // M
+#define GESTURE_W               13 // W
+#define GESTURE_S               14 // S
 
 // Gesture key codes
-#define KEY_GESTURE_W               246 // W
-#define KEY_GESTURE_M               247 // M
-#define KEY_GESTURE_S               248 // S
-#define KEY_DOUBLE_TAP              KEY_WAKEUP // double tap to wake
-#define KEY_GESTURE_CIRCLE          250 // draw circle to lunch camera
-#define KEY_GESTURE_TWO_SWIPE       251 // swipe two finger vertically to play/pause
-#define KEY_GESTURE_UP_ARROW        252 // draw up arrow to toggle flashlight
-#define KEY_GESTURE_LEFT_ARROW      253 // draw left arrow for previous track
-#define KEY_GESTURE_RIGHT_ARROW     254 // draw right arrow for next track
-#define KEY_GESTURE_DOWN_ARROW      255 // draw down arrow to toggle flashlight
-#define KEY_GESTURE_SWIPE_RIGHT     KEY_F5
-#define KEY_GESTURE_SWIPE_LEFT      KEY_F6
-#define KEY_GESTURE_SWIPE_DOWN      KEY_F7
-#define KEY_GESTURE_SWIPE_UP        KEY_F8
+
+// Set mode based on whether enable and/or switch write functions were used
+#define ENABLE_IN_USE BIT0
+#define SWITCH_IN_USE BIT1
+
+static uint32_t key_code_mode __read_mostly = 0;
+
+struct gesture_key_codes {
+	int oos_key_code, alt_key_code;
+};
+
+static struct gesture_key_codes key_codes_table[] = {
+	{ 0 }, // GESTURE_NONE
+	{ KEY_WAKEUP, KEY_F1 }, // GESTURE_DOUBLE_TAP
+	{ 255, KEY_F4 }, // GESTURE_DOWN_ARROW
+	{ 252, KEY_F7 }, // GESTURE_UP_ARROW
+	{ 254, KEY_F6 }, // GESTURE_RIGHT_ARROW
+	{ 253, KEY_F5 }, // GESTURE_LEFT_ARROW
+	{ 250, KEY_F2 }, // GESTURE_CIRCLE
+	{ 251, KEY_F3 }, // GESTURE_DOUBLE_SWIPE
+	{ KEY_F5, KEY_F9 }, // GESTURE_RIGHT_SWIPE
+	{ KEY_F6, KEY_F8 }, // GESTURE_LEFT_SWIPE
+	{ KEY_F7, KEY_F14 }, // GESTURE_DOWN_SWIPE
+	{ KEY_F8, KEY_F13 }, // GESTURE_UP_SWIPE
+	{ 247, KEY_F10 }, // GESTURE_M
+	{ 246, KEY_F11 }, // GESTURE_W
+	{ 248, KEY_F12 }, // GESTURE_S
+};
+
+/* For OOS */
+static int gesture_switch;
 #endif
 
 // Button key mask
@@ -319,7 +352,7 @@ static ssize_t synaptics_rmi4_baseline_show(struct device *dev,
 char *buf, bool savefile);
 static ssize_t synaptics_rmi4_vendor_id_show(struct device *dev,
 struct device_attribute *attr, char *buf);
-static int synapitcs_ts_update(struct i2c_client *client,
+static inline int synapitcs_ts_update(struct i2c_client *client,
 const uint8_t *data, uint32_t data_len, bool force);
 
 static inline int synaptics_rmi4_i2c_read_block(struct i2c_client *client,
@@ -339,7 +372,7 @@ static inline int synaptics_rmi4_i2c_read_word(struct i2c_client *client,
 
 static inline int synaptics_rmi4_i2c_write_word(struct i2c_client *client,
 		unsigned char addr, unsigned short data);
-static int synaptics_mode_change(int mode);
+static inline int synaptics_mode_change(int mode);
 
 #ifdef TPD_USE_EINT
 static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id);
@@ -473,8 +506,7 @@ struct synaptics_ts_data {
 	uint32_t btn_state;
 	uint32_t pre_finger_state;
 	uint32_t pre_btn_state;
-	struct delayed_work  base_work;
-	struct work_struct  report_work;
+	struct delayed_work base_work;
 	struct delayed_work speed_up_work;
 	struct input_dev *input_dev;
 	struct hrtimer timer;
@@ -486,7 +518,7 @@ struct synaptics_ts_data {
 	int in_gesture_mode;
 	int glove_enable;
 	int changer_connet;
-	int is_suspended;
+	bool is_suspended;
 	atomic_t is_stop;
 	spinlock_t lock;
 
@@ -994,12 +1026,14 @@ unsigned char addr, unsigned short length, unsigned char *data)
 	return retval;
 }
 
+#define SYNAPTICS_I2C_WRITE_MAX 256
+
 static inline int synaptics_rmi4_i2c_write_block(struct i2c_client *client,
 unsigned char addr, unsigned short length, unsigned char const *data)
 {
 	int retval;
 	unsigned char retry;
-	unsigned char buf[length + 1];
+	unsigned char buf[SYNAPTICS_I2C_WRITE_MAX + 1];
 	struct i2c_msg msg[] = {
 		{
 			.addr = client->addr,
@@ -1008,6 +1042,9 @@ unsigned char addr, unsigned short length, unsigned char const *data)
 			.buf = buf,
 		}
 	};
+
+	if (length > SYNAPTICS_I2C_WRITE_MAX)
+		return -EINVAL;
 
 	buf[0] = addr & 0xff;
 	memcpy(&buf[1], &data[0], length);
@@ -1035,7 +1072,7 @@ unsigned char addr)
 	unsigned char buf[2] = {0};
 
 	retval = synaptics_rmi4_i2c_read_block(client, addr, 1, buf);
-	if (retval >= 0)
+	if (likely(retval >= 0))
 		retval = buf[0] & 0xff;
 	return retval;
 }
@@ -1057,7 +1094,7 @@ unsigned char addr)
 	unsigned char buf[2] = {0};
 
 	retval = synaptics_rmi4_i2c_read_block(client, addr, 2, buf);
-	if (retval >= 0)
+	if (likely(retval >= 0))
 		retval = buf[1] << 8 | buf[0];
 	return retval;
 }
@@ -1069,7 +1106,7 @@ unsigned char addr, unsigned short data)
 	unsigned char buf[2] = {data & 0xff, (data >> 8) & 0xff};
 
 	retval = synaptics_rmi4_i2c_write_block(client, addr, 2, buf);
-	if (retval >= 0)
+	if (likely(retval >= 0))
 		retval = buf[1] << 8 | buf[0];
 
 	return retval;
@@ -1129,13 +1166,16 @@ static void synaptics_get_coordinate_point(struct synaptics_ts_data *ts)
 
 static void gesture_judge(struct synaptics_ts_data *ts)
 {
-	unsigned int keyCode = 0;
-
+	unsigned int keyCode = KEY_F4;
 	int ret = 0;
 	int regswipe;
-
 	uint8_t gesture_buffer[10];
 	unsigned char reportbuf[3];
+
+	if (version_is_s3508)
+		F12_2D_DATA04 = 0x0008;
+	else
+		F12_2D_DATA04 = 0x000A;
 
 	ret = synaptics_rmi4_i2c_write_byte(ts->client, 0xff, 0x00);
 
@@ -1243,71 +1283,19 @@ static void gesture_judge(struct synaptics_ts_data *ts)
 		break;
 	}
 
-	// Get key code based on registered gesture.
-	switch (gesture) {
-	case GESTURE_DOUBLE_TAP:
-		keyCode = KEY_DOUBLE_TAP;
-		break;
-
-	case GESTURE_UP_ARROW:
-		keyCode = KEY_GESTURE_UP_ARROW;
-		break;
-
-	case GESTURE_DOWN_ARROW:
-		keyCode = KEY_GESTURE_DOWN_ARROW;
-		break;
-
-	case GESTURE_LEFT_ARROW:
-		keyCode = KEY_GESTURE_LEFT_ARROW;
-		break;
-
-	case GESTURE_RIGHT_ARROW:
-		keyCode = KEY_GESTURE_RIGHT_ARROW;
-		break;
-
-	case GESTURE_CIRCLE:
-		keyCode = KEY_GESTURE_CIRCLE;
-		break;
-
-	case GESTURE_DOUBLE_SWIPE:
-		keyCode = KEY_GESTURE_TWO_SWIPE;
-		break;
-
-	case GESTURE_LEFT_SWIPE:
-		keyCode = KEY_GESTURE_SWIPE_LEFT;
-		break;
-
-	case GESTURE_RIGHT_SWIPE:
-		keyCode = KEY_GESTURE_SWIPE_RIGHT;
-		break;
-
-	case GESTURE_UP_SWIPE:
-		keyCode = KEY_GESTURE_SWIPE_UP;
-		break;
-
-	case GESTURE_DOWN_SWIPE:
-		keyCode = KEY_GESTURE_SWIPE_DOWN;
-		break;
-
-	case GESTURE_W:
-		keyCode = KEY_GESTURE_W;
-		break;
-
-	case GESTURE_M:
-		keyCode = KEY_GESTURE_M;
-		break;
-
-	case GESTURE_S:
-		keyCode = KEY_GESTURE_S;
-		break;
-
-	default:
-		break;
+	if (!(key_code_mode & SWITCH_IN_USE)) {
+		// Get key code based on registered gesture.
+		keyCode = (key_code_mode & ENABLE_IN_USE) ? 
+				key_codes_table[gesture].alt_key_code : 
+				key_codes_table[gesture].oos_key_code;
 	}
 
 	synaptics_get_coordinate_point(ts);
 
-	if ((gesture & ts->gestures_enable) != 0) {
+	if (ts->gestures_enable & (0x1 << gesture) ||
+		(!!ts->gestures_enable && (key_code_mode & ENABLE_IN_USE)) ||
+		gesture == GESTURE_S || gesture == GESTURE_W ||
+		gesture == GESTURE_M) {
 		gesture_upload = gesture;
 		input_report_key(ts->input_dev, keyCode, 1);
 		input_sync(ts->input_dev);
@@ -1328,8 +1316,6 @@ static void gesture_judge(struct synaptics_ts_data *ts)
 			return;
 		}
 	}
-
-	TPD_DEBUG("%s end!\n", __func__);
 }
 #endif
 /***************end****************/
@@ -1522,7 +1508,7 @@ static inline void int_touch(void)
 
 	last_status = current_status & 0x02;
 
-	if (finger_num == 0/* && last_status && (check_key <= 1)*/) {
+	if (finger_num == 0 /* && last_status && (check_key <= 1) */ ) {
 		input_report_key(ts->input_dev, BTN_TOOL_FINGER, 0);
 #ifndef TYPE_B_PROTOCOL
 		input_mt_sync(ts->input_dev);
@@ -1537,7 +1523,7 @@ static inline void int_touch(void)
 	}
 
 #ifdef SUPPORT_GESTURE
-	if (ts->in_gesture_mode == 1 && ts->is_suspended == 1)
+	if (ts->in_gesture_mode && ts->is_suspended)
 		gesture_judge(ts);
 #endif
 }
@@ -1558,7 +1544,7 @@ static inline void int_key_report_s3508(struct synaptics_ts_data *ts)
 	int keycode_left;
 	int keycode_right;
 
-	if (ts->is_suspended == 1)
+	if (ts->is_suspended)
 		return;
 
 	ret = synaptics_rmi4_i2c_write_byte(ts->client, 0xff, 0x02);
@@ -1624,30 +1610,15 @@ static int synaptics_rmi4_free_fingers(struct synaptics_ts_data *ts)
 	return 0;
 }
 
-#ifndef TPD_USE_EINT
-static enum hrtimer_restart synaptics_ts_timer_func(struct hrtimer *timer)
+static void synaptics_ts_work_func(struct synaptics_ts_data *ts)
 {
-	struct synaptics_ts_data *ts =
-	    container_of(timer, struct synaptics_ts_data, timer);
-
-	mutex_lock(&ts->mutex);
-	synaptics_ts_work_func(ts);
-	mutex_unlock(&ts->mutex);
-	hrtimer_start(&ts->timer, ktime_set(0, 12500000), HRTIMER_MODE_REL);
-
-	return HRTIMER_NORESTART;
-}
-#else
-static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id)
-{
-	struct synaptics_ts_data *ts = (struct synaptics_ts_data *)dev_id;
 	int ret, status_check;
 	uint8_t status = 0;
 	uint8_t inte = 0;
 
 	if (unlikely(atomic_read(&ts->is_stop) == 1)) {
 		touch_disable(ts);
-		return IRQ_HANDLED;
+		return;
 	}
 
 	if (unlikely(ts->enable_remote))
@@ -1675,7 +1646,7 @@ static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id)
 			TPD_ERR("synaptics_init_panel failed\n");
 		}
 
-		if (ts->is_suspended == 1 && ts->gestures_enable != 0) {
+		if (ts->is_suspended && !!ts->gestures_enable) {
 			synaptics_enable_interrupt_for_gesture(ts, 1);
 		}
 	}
@@ -1695,11 +1666,27 @@ static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id)
 		int_key_report_s3508(ts);
 	}
 
-
 END:
-	//ret = set_changer_bit(ts);
 	pm_qos_update_request(&ts->pm_qos_req, PM_QOS_DEFAULT_VALUE);
+}
 
+#ifndef TPD_USE_EINT
+static enum hrtimer_restart synaptics_ts_timer_func(struct hrtimer *timer)
+{
+	struct synaptics_ts_data *ts =
+	    container_of(timer, struct synaptics_ts_data, timer);
+
+	mutex_lock(&ts->mutex);
+	synaptics_ts_work_func(ts);
+	mutex_unlock(&ts->mutex);
+	hrtimer_start(&ts->timer, ktime_set(0, 12500000), HRTIMER_MODE_REL);
+
+	return HRTIMER_NORESTART;
+}
+#else
+static irqreturn_t synaptics_irq_thread_fn(int irq, void *dev_id)
+{
+	synaptics_ts_work_func((struct synaptics_ts_data *)dev_id);
 	return IRQ_HANDLED;
 }
 #endif
@@ -1738,6 +1725,65 @@ static ssize_t i2c_device_test_read_func(struct file *file, char __user *user_bu
 }
 
 #ifdef SUPPORT_GESTURE
+static ssize_t gesture_enable_read_func(struct file *file,
+char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	char page[PAGESIZE];
+	struct synaptics_ts_data *ts = ts_g;
+
+	if (!ts)
+		return ret;
+	TPD_DEBUG("gesture enable is: %d\n", ts->gestures_enable);
+	ret = snprintf(page, 4, "%d\n", !!ts->gestures_enable);
+	ret = simple_read_from_buffer(user_buf, count,
+	ppos, page, strlen(page));
+	return ret;
+}
+
+static inline void set_gesture_state(struct synaptics_ts_data *ts, 
+		uint32_t flag, bool state)
+{
+	if (state)
+		ts->gestures_enable |= flag;
+	else
+		ts->gestures_enable &= ~flag;
+}
+
+static ssize_t gesture_enable_write_func(struct file *file,
+const char __user *buffer, size_t count, loff_t *ppos)
+{
+	char buf[10];
+	struct synaptics_ts_data *ts = ts_g;
+
+	if (unlikely(!(key_code_mode & ENABLE_IN_USE)))
+		key_code_mode |= ENABLE_IN_USE;
+
+	if (!ts)
+		return count;
+	if (count > 3 || ts->is_suspended)
+		return count;
+	if (copy_from_user(buf, buffer, count)) {
+		TPD_ERR(KERN_INFO "%s: read proc input error.\n", __func__);
+		return count;
+	}
+	TPD_ERR("%s write argc1[0x%x],argc2[0x%x]\n",
+	__func__, buf[0], buf[1]);
+
+	set_gesture_state(ts, DOWN_ARROW_FLAG, (buf[0] & BIT0));
+	set_gesture_state(ts, DOUBLE_SWIPE_FLAG, (buf[0] & BIT1));
+	set_gesture_state(ts, RIGHT_ARROW_FLAG, (buf[0] & BIT3));
+	set_gesture_state(ts, LEFT_ARROW_FLAG, (buf[0] & BIT4));
+	set_gesture_state(ts, CIRCLE_FLAG, (buf[0] & BIT6));
+	set_gesture_state(ts, DOUBLE_TAP_FLAG, (buf[0] & BIT7));
+
+	set_gesture_state(ts, S_FLAG, (buf[1] & BIT0));
+	set_gesture_state(ts, M_FLAG, (buf[1] & BIT1));
+	set_gesture_state(ts, W_FLAG, (buf[1] & BIT2));
+
+	return count;
+}
+
 static ssize_t coordinate_proc_read_func(struct file *file,
 char __user *user_buf, size_t count, loff_t *ppos)
 {
@@ -1757,7 +1803,78 @@ char __user *user_buf, size_t count, loff_t *ppos)
 	return ret;
 }
 
+static ssize_t gesture_switch_read_func(struct file *file,
+char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	char page[PAGESIZE];
+	struct synaptics_ts_data *ts = ts_g;
+
+	if (!ts)
+		return ret;
+
+	ret = snprintf(page, 18, "gesture_switch:%d\n", gesture_switch);
+	ret = simple_read_from_buffer(user_buf, count,
+	ppos, page, strlen(page));
+	return ret;
+}
+
+static ssize_t gesture_switch_write_func(struct file *file,
+const char __user *page, size_t count, loff_t *ppos)
+{
+	int ret, write_flag = 0;
+	char buf[10] = {0};
+	struct synaptics_ts_data *ts = ts_g;
+
+	if (unlikely(!(key_code_mode & SWITCH_IN_USE)))
+		key_code_mode |= SWITCH_IN_USE;
+
+	if (ts->loading_fw) {
+		TPD_ERR("%s FW is updating break!!\n", __func__);
+		return count;
+	}
+	if (copy_from_user(buf, page, count)) {
+		TPD_ERR("%s: read proc input error.\n", __func__);
+		return count;
+	}
+	ret = kstrtoint(buf, 10, &write_flag);
+	gesture_switch = write_flag;
+	TPD_ERR("gesture_switch:%d,suspend:%d,gesture:%d\n", gesture_switch,
+	    ts->is_suspended, ts->gestures_enable);
+	if (gesture_switch == 1) {
+		if (ts->is_suspended && !!ts->gestures_enable) {
+			i2c_smbus_write_byte_data(ts->client, 0xff, 0x0);
+			synaptics_mode_change(0x80);
+			/*touch_enable(ts);*/
+			synaptics_enable_interrupt_for_gesture(ts, 1);
+		}
+	} else if (gesture_switch == 2) {
+		if (ts->is_suspended && !!ts->gestures_enable) {
+			i2c_smbus_write_byte_data(ts->client, 0xff, 0x0);
+			synaptics_mode_change(0x81);
+			/*touch_enable(ts);*/
+			synaptics_enable_interrupt_for_gesture(ts, 0);
+		}
+	}
+
+	return count;
+}
+
 /******************************start****************************/
+static const struct file_operations gesture_enable_proc_fops = {
+	.write = gesture_enable_write_func,
+	.read =  gesture_enable_read_func,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+};
+
+static const struct file_operations gesture_switch_proc_fops = {
+	.write = gesture_switch_write_func,
+	.read =  gesture_switch_read_func,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+};
+
 static const struct file_operations coordinate_proc_fops = {
 	.read =  coordinate_proc_read_func,
 	.open = simple_open,
@@ -1769,7 +1886,7 @@ static const struct file_operations coordinate_proc_fops = {
 	{\
 		int ret = 0;\
 		char page[PAGESIZE];\
-		ret = sprintf(page, "%d\n", (ts_g->gestures_enable & flag) != 0);\
+		ret = sprintf(page, "%d\n", (ts_g->gestures_enable & flag));\
 		ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));\
 		return ret;\
 	}\
@@ -1779,11 +1896,7 @@ static const struct file_operations coordinate_proc_fops = {
 		char page[PAGESIZE] = {0};\
 		ret = copy_from_user(page, user_buf, count);\
 		ret = sscanf(page, "%d", &write_flag);\
-		if (write_flag) {\
-			ts_g->gestures_enable |= flag;\
-		} else {\
-			ts_g->gestures_enable &= ~flag;\
-		}\
+		set_gesture_state(ts_g, flag, !!write_flag);\
 		return count;\
 	}\
 	static const struct file_operations name##_enable_proc_fops = {\
@@ -1793,20 +1906,20 @@ static const struct file_operations coordinate_proc_fops = {
 	    .owner = THIS_MODULE,\
 	};
 
-GESTURE_ATTR(double_tap, GESTURE_DOUBLE_TAP);
-GESTURE_ATTR(up_arrow, GESTURE_UP_ARROW);
-GESTURE_ATTR(down_arrow, GESTURE_DOWN_ARROW);
-GESTURE_ATTR(left_arrow, GESTURE_LEFT_ARROW);
-GESTURE_ATTR(right_arrow, GESTURE_RIGHT_ARROW);
-GESTURE_ATTR(double_swipe, GESTURE_DOUBLE_SWIPE);
-GESTURE_ATTR(up_swipe, GESTURE_UP_SWIPE);
-GESTURE_ATTR(down_swipe, GESTURE_DOWN_SWIPE);
-GESTURE_ATTR(left_swipe, GESTURE_LEFT_SWIPE);
-GESTURE_ATTR(right_swipe, GESTURE_RIGHT_SWIPE);
-GESTURE_ATTR(letter_o, GESTURE_CIRCLE);
-GESTURE_ATTR(letter_w, GESTURE_W);
-GESTURE_ATTR(letter_m, GESTURE_M);
-GESTURE_ATTR(letter_s, GESTURE_S);
+GESTURE_ATTR(double_tap, DOUBLE_TAP_FLAG);
+GESTURE_ATTR(up_arrow, UP_ARROW_FLAG);
+GESTURE_ATTR(down_arrow, DOWN_ARROW_FLAG);
+GESTURE_ATTR(left_arrow, LEFT_ARROW_FLAG);
+GESTURE_ATTR(right_arrow, RIGHT_ARROW_FLAG);
+GESTURE_ATTR(double_swipe, DOUBLE_SWIPE_FLAG);
+GESTURE_ATTR(up_swipe, UP_SWIPE_FLAG);
+GESTURE_ATTR(down_swipe, DOWN_SWIPE_FLAG);
+GESTURE_ATTR(left_swipe, LEFT_SWIPE_FLAG);
+GESTURE_ATTR(right_swipe, RIGHT_SWIPE_FLAG);
+GESTURE_ATTR(letter_o, CIRCLE_FLAG);
+GESTURE_ATTR(letter_w, W_FLAG);
+GESTURE_ATTR(letter_m, M_FLAG);
+GESTURE_ATTR(letter_s, S_FLAG);
 #endif
 static int page, address, block;
 static ssize_t synap_read_address(struct file *file, char __user *user_buf,
@@ -1988,35 +2101,6 @@ const char *buffer, size_t count, loff_t *ppos)
 }
 #endif
 
-static ssize_t tp_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	struct synaptics_ts_data *ts = ts_g;
-	int a;
-	int b, c;
-
-	if (!ts)
-		return 0;
-	a = synaptics_rmi4_i2c_read_word(ts->client, F01_RMI_DATA_BASE);
-	if (a < 0)
-		TPD_ERR("tp_show read i2c err\n");
-	b = synaptics_rmi4_i2c_read_byte(ts->client, F01_RMI_DATA01);
-	if (b < 0)
-		TPD_ERR("tp_show read i2c err\n");
-	c = synaptics_rmi4_i2c_read_byte(ts->client, F12_2D_DATA_BASE);
-	if (c < 0)
-		TPD_ERR("tp_show read i2c err\n");
-
-	return snprintf(buf, 88, "F01_RMI_DATA_BASE[0x%x]=0x%x;\n"
-	"F01_RMI_DATA01[0x%x]=0x%x;F12_2D_DATA_BASE[0x%x]=0x%x;\n",
-	F01_RMI_DATA_BASE, a, F01_RMI_DATA01, b, F12_2D_DATA_BASE, c);
-}
-
-static ssize_t store_tp(struct device *dev,
-                struct device_attribute *attr,
-                const char *buf, size_t size)
-{
-	return size;
-}
 static ssize_t vendor_id_read_func(struct file *file,
 char __user *user_buf, size_t count, loff_t *ppos)
 {
@@ -2173,7 +2257,7 @@ static ssize_t tp_baseline_show(struct device *dev, struct device_attribute *att
 	num_read_chars += snprintf(&(buf[num_read_chars]), 2, "\n");
 	TPD_DEBUG("\nread all is oK\n");
 	ret = i2c_smbus_write_byte_data(ts->client,
-	F54_ANALOG_COMMAND_BASE, 0X02);
+					F54_ANALOG_COMMAND_BASE, 0X02);
 	msleep(60);
 
 #ifdef SUPPORT_GLOVES_MODE
@@ -2235,7 +2319,7 @@ static ssize_t tp_rawdata_show(struct device *dev, struct device_attribute *attr
 	}
 	num_read_chars += snprintf(&(buf[num_read_chars]), 2, "\n");
 	ret = i2c_smbus_write_byte_data(ts->client,
-	F54_ANALOG_COMMAND_BASE, 0X02);
+					F54_ANALOG_COMMAND_BASE, 0X02);
 	msleep(60);
 	synaptics_enable_interrupt(ts, 1);
 	mutex_unlock(&ts->mutex);
@@ -2671,7 +2755,7 @@ TEST_WITH_CBC_s3508:
 END:
 
 	ret = i2c_smbus_write_byte_data(ts->client,
-	F54_ANALOG_COMMAND_BASE, 0X02);
+					F54_ANALOG_COMMAND_BASE, 0X02);
 	msleep(60);
 	ret = i2c_smbus_write_byte_data(ts->client, 0xff, 0x00);
 	ret = i2c_smbus_write_byte_data(ts->client, F01_RMI_CMD00, 0x01);
@@ -2715,7 +2799,7 @@ static ssize_t tp_baseline_show_with_cbc(struct device *dev, struct device_attri
 	uint16_t count = 0;
 	struct synaptics_ts_data *ts = ts_g;
 
-	if (ts->is_suspended == 1)
+	if (ts->is_suspended)
 		return count;
 	memset(delta_baseline, 0, sizeof(delta_baseline));
 	if (!ts)
@@ -2792,7 +2876,7 @@ static ssize_t tp_baseline_show_with_cbc(struct device *dev, struct device_attri
 	}
 	num_read_chars += snprintf(&(buf[num_read_chars]), 2, "\n");
 	ret = synaptics_rmi4_i2c_write_byte(ts->client,
-	F54_ANALOG_COMMAND_BASE, 0x02);
+					    F54_ANALOG_COMMAND_BASE, 0x02);
 	msleep(60);
 	synaptics_enable_interrupt(ts, 1);
 	mutex_unlock(&ts->mutex);
@@ -2831,6 +2915,7 @@ static int	synaptics_input_init(struct synaptics_ts_data *ts)
 {
 	int attr_count = 0;
 	int ret = 0;
+	int i;
 
 	TPD_DEBUG("%s is called\n", __func__);
 	ts->input_dev = input_allocate_device();
@@ -2851,21 +2936,11 @@ static int	synaptics_input_init(struct synaptics_ts_data *ts)
 	set_bit(INPUT_PROP_DIRECT, ts->input_dev->propbit);
 	set_bit(BTN_TOOL_FINGER, ts->input_dev->keybit);
 #ifdef SUPPORT_GESTURE
-	set_bit(KEY_F4, ts->input_dev->keybit); //doulbe-tap resume
-	set_bit(KEY_DOUBLE_TAP, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_W, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_M, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_S, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_CIRCLE, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_TWO_SWIPE, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_UP_ARROW, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_LEFT_ARROW, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_RIGHT_ARROW, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_DOWN_ARROW, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_SWIPE_UP, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_SWIPE_LEFT, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_SWIPE_RIGHT, ts->input_dev->keybit);
-	set_bit(KEY_GESTURE_SWIPE_DOWN, ts->input_dev->keybit);
+	// Register all known key codes
+	for (i = 0; i < ARRAY_SIZE(key_codes_table); i++) {
+		set_bit(key_codes_table[i].alt_key_code, ts->input_dev->keybit);
+		set_bit(key_codes_table[i].oos_key_code, ts->input_dev->keybit);
+	}
 #endif
 	set_bit(KEY_BUTTON_LEFT, ts->input_dev->keybit);
 	set_bit(KEY_BUTTON_RIGHT, ts->input_dev->keybit);
@@ -3414,19 +3489,23 @@ static int tp_baseline_get(struct synaptics_ts_data *ts, bool flag)
 	int ret = 0;
 	int x, y;
 	uint8_t *value;
+	size_t value_len = 2 * TX_NUM * RX_NUM;
 	int k = 0;
 
 	if (!ts)
 		return -ENOMEM;
 
+	value = kzalloc(value_len, GFP_KERNEL);
+	if (!value)
+		return -ENOMEM;
+
 	atomic_set(&ts->is_stop, 1);
 	touch_disable(ts);
 	TPD_DEBUG("%s start!\n", __func__);
-	value = kzalloc(TX_NUM*RX_NUM*2, GFP_KERNEL);
 	memset(delta_baseline, 0, sizeof(delta_baseline));
 
 	mutex_lock(&ts->mutex);
-	if (ts->gestures_enable)
+	if (!!ts->gestures_enable)
 		synaptics_enable_interrupt_for_gesture(ts, false);
 	else
 		synaptics_mode_change(0x00);/*change getbase data*/
@@ -3441,7 +3520,8 @@ static int tp_baseline_get(struct synaptics_ts_data *ts, bool flag)
 	checkCMD(10);
 
 	ret = synaptics_rmi4_i2c_read_block(ts->client,
-	F54_ANALOG_DATA_BASE + 3, 2*TX_NUM*RX_NUM, value);
+				    F54_ANALOG_DATA_BASE + 3, 
+				    2 * TX_NUM * RX_NUM, value);
 	for (x = 0; x < TX_NUM; x++) {
 		for (y = 0; y < RX_NUM; y++) {
 			delta_baseline[x][y] =  (int16_t)(((uint16_t)(value[k]))
@@ -3462,7 +3542,7 @@ static int tp_baseline_get(struct synaptics_ts_data *ts, bool flag)
 	mutex_unlock(&ts->mutex);
 	atomic_set(&ts->is_stop, 0);
 	msleep(20);
-	if (ts->gestures_enable)
+	if (!!ts->gestures_enable)
 		set_doze_time(1);
 	touch_enable(ts);
 #ifdef ENABLE_TPEDGE_LIMIT
@@ -3507,8 +3587,6 @@ static ssize_t touch_press_status_read(struct file *file, char __user *user_buf,
 		get_tp_base = 0;
 
 	TPD_ERR("points_mispressee num:%d,get_tp_base:%d\n", points_misspresee, get_tp_base);
-	snprintf(page, 24, "\n%s %d PD > [25]\n",
-		  (press_points > 4) ? "near" : "away", press_points);
 	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
 	return ret;
 }
@@ -3528,7 +3606,7 @@ static ssize_t touch_press_status_write(struct file *file, const char __user *bu
 	if (ret == 0) {
 		tp_baseline_get(ts, false);
 	} else if (ret == 1) {
-		if (ts->gestures_enable == 0)
+		if (!ts->gestures_enable)
 			queue_delayed_work(get_base_report, &ts->base_work, msecs_to_jiffies(120));
 		else
 			queue_delayed_work(get_base_report, &ts->base_work, msecs_to_jiffies(1));
@@ -3628,6 +3706,18 @@ static ssize_t key_swap_read_func(struct file *file, char __user *user_buf, size
 	return ret;
 }
 
+/* Add inverted read for OOS */
+static ssize_t key_swap_inv_read_func(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
+{
+	int ret = 0;
+	char page[PAGESIZE];
+
+	ret = sprintf(page, "%d\n", !ts_g->key_swap);
+	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
+
+	return ret;
+}
+
 static ssize_t key_swap_write_func(struct file *file, const char __user *user_buf, size_t count, loff_t *ppos)
 {
 	int ret, write_flag = 0;
@@ -3640,6 +3730,13 @@ static ssize_t key_swap_write_func(struct file *file, const char __user *user_bu
 
 	return count;
 }
+
+static const struct file_operations key_switch_proc_fops = {
+	.write = key_swap_write_func,
+	.read =  key_swap_inv_read_func,
+	.open = simple_open,
+	.owner = THIS_MODULE,
+};
 
 static const struct file_operations key_rep_proc_fops = {
 	.write = key_swap_write_func,
@@ -3693,12 +3790,10 @@ static const struct file_operations key_disable_proc_fops = {
 static int init_synaptics_proc(struct synaptics_ts_data *ts)
 {
 	int ret = 0;
-
 	struct proc_dir_entry *touchpanel = NULL;
 #ifdef SUPPORT_TP_TOUCHKEY
 	struct proc_dir_entry *s1302 = NULL;
 #endif
-
 	struct proc_dir_entry *node  = NULL;
 
 	touchpanel = proc_mkdir("touchpanel", NULL);
@@ -3716,6 +3811,8 @@ static int init_synaptics_proc(struct synaptics_ts_data *ts)
 #endif
 
 #ifdef SUPPORT_GESTURE
+	CREATE_PROC_NODE(touchpanel, gesture_enable, 0666);
+	CREATE_PROC_NODE(touchpanel, gesture_switch, 0666);
 	CREATE_PROC_NODE(touchpanel, coordinate, 0444);
 	CREATE_GESTURE_NODE(double_tap);
 	CREATE_GESTURE_NODE(up_arrow);
@@ -3762,6 +3859,7 @@ static int init_synaptics_proc(struct synaptics_ts_data *ts)
 	// disable button swap and key disabler proc nodes for 17801 (dumpling)
 	if (!ts->support_1080x2160_tp) {
 		CREATE_PROC_NODE(s1302, key_rep, 0666);
+		CREATE_PROC_NODE(touchpanel, key_switch, 0666);
 		CREATE_PROC_NODE(touchpanel, key_disable, 0666);
 	}
 #endif
@@ -4963,7 +5061,7 @@ static void speedup_synaptics_resume(struct work_struct *work)
 /*#ifdef SUPPORT_SLEEP_POWEROFF*/
 	TPD_DEBUG("%s enter!\n", __func__);
 	if (ts->support_hw_poweroff) {
-		if (ts->gestures_enable == 0) {
+		if (!ts->gestures_enable) {
 			if (ts->pinctrl)
 				ret = pinctrl_select_state(ts->pinctrl,
 				    ts->pinctrl_state_active);
@@ -5016,7 +5114,7 @@ static int synaptics_i2c_suspend(struct device *dev)
 	struct synaptics_ts_data *ts = dev_get_drvdata(dev);
 
 	TPD_DEBUG("%s: is called\n", __func__);
-	if (ts->gestures_enable == 1) {
+	if (!!ts->gestures_enable) {
 		/*enable gpio wake system through intterrupt*/
 		enable_irq_wake(ts->irq);
 	}
@@ -5025,7 +5123,7 @@ static int synaptics_i2c_suspend(struct device *dev)
 		TPD_ERR("FW is updating while suspending");
 		return -EINVAL;
 	}
-	if (ts->support_hw_poweroff && (ts->gestures_enable == 0)) {
+	if (ts->support_hw_poweroff && !ts->gestures_enable) {
 		ret = tpd_power(ts, 0);
 		if (ret < 0)
 			TPD_ERR("%s power off err\n", __func__);
@@ -5045,7 +5143,7 @@ static int synaptics_i2c_resume(struct device *dev)
 	TPD_DEBUG("%s is called\n", __func__);
 	queue_delayed_work(synaptics_wq, &ts->speed_up_work,
 	msecs_to_jiffies(1));
-	if (ts->gestures_enable == 1) {
+	if (!!ts->gestures_enable) {
 		/*disable gpio wake system through intterrupt*/
 		disable_irq_wake(ts->irq);
 	}
@@ -5088,7 +5186,7 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
 		if ((*blank == FB_BLANK_UNBLANK/* || *blank == FB_BLANK_VSYNC_SUSPEND || *blank == FB_BLANK_NORMAL*/)\
 		        //&& (event == FB_EVENT_BLANK ))
 		        && (event == FB_EARLY_EVENT_BLANK)) {
-			if (ts->is_suspended == 1) {
+			if (ts->is_suspended) {
 				TPD_DEBUG("%s going TP resume start\n", __func__);
 				ts->is_suspended = 0;
 				queue_delayed_work(get_base_report, &ts->base_work, msecs_to_jiffies(80));
@@ -5097,14 +5195,13 @@ static int fb_notifier_callback(struct notifier_block *self, unsigned long event
 				TPD_DEBUG("%s going TP resume end\n", __func__);
 			}
 		} else if (*blank == FB_BLANK_POWERDOWN && (event == FB_EARLY_EVENT_BLANK)) {
-			if (ts->is_suspended == 0) {
+			if (!ts->is_suspended) {
 				TPD_DEBUG("%s : going TP suspend start\n", __func__);
 				ts->is_suspended = 1;
 				atomic_set(&ts->is_stop, 1);
 
-				if (ts->gestures_enable == 0) {
+				if (!ts->gestures_enable)
 					touch_disable(ts);
-				}
 
 				synaptics_ts_suspend(&ts->client->dev);
 				TPD_DEBUG("%s : going TP suspend end\n", __func__);

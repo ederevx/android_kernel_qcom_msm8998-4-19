@@ -91,6 +91,7 @@
 /* Bq27411 standard data commands */
 #define BQ27411_REG_TEMP		0x02
 #define BQ27411_REG_VOLT		0x04
+#define BQ27411_REG_NAC			0x08
 #define BQ27411_REG_RM			0x0c
 #define BQ27411_REG_AI			0x10
 #define BQ27411_REG_SOC			0x1c
@@ -200,6 +201,7 @@ struct bq27541_access_methods {
 struct cmd_address {
 	u8	reg_temp;
 	u8	reg_volt;
+	u8	reg_nac;
 	u8	reg_rm;
 	u8	reg_ai;
 	u8	reg_soc;
@@ -230,6 +232,7 @@ struct bq27541_device_info {
 	int  batt_vol_pre;
 	int current_pre;
 	int dcap_pre;
+	int nac_pre;
 	int rmcap_pre;
 	int fcc_pre;
 	int health_pre;
@@ -923,6 +926,32 @@ static int bq27541_design_capacity(struct bq27541_device_info *di)
 	return di->dcap_pre;
 }
 
+static int bq27541_nominal_available_capacity(
+		struct bq27541_device_info *di)
+{
+	int ret;
+	int cap = 0;
+
+	/* Add for get right soc when sleep long time */
+	if (atomic_read(&di->suspended) == 1)
+		return di->nac_pre;
+
+	if (di->allow_reading) {
+#ifdef CONFIG_GAUGE_BQ27411
+		ret = bq27541_read(di->cmd_addr.reg_nac, &cap, 0, di);
+#else
+		ret = bq27541_read(BQ27541_REG_NAC, &cap, 0, di);
+#endif
+		if (ret) {
+			pr_err("error reading nominal available capacity.\n");
+			return ret;
+		}
+		di->nac_pre = cap * 1000;
+	}
+
+	return di->nac_pre;
+}
+
 static int bq27541_remaining_capacity(struct bq27541_device_info *di)
 {
 	int ret;
@@ -1005,6 +1034,11 @@ static int bq27541_batt_health(struct bq27541_device_info *di)
 static int bq27541_get_battery_mvolts(void)
 {
 	return bq27541_battery_voltage(bq27541_di);
+}
+
+static int bq27541_get_batt_charge_now(void)
+{
+	return bq27541_nominal_available_capacity(bq27541_di);
 }
 
 static int bq27541_get_batt_design_capacity(void)
@@ -1140,6 +1174,7 @@ static struct external_battery_gauge bq27541_batt_gauge = {
 	.is_battery_present		= bq27541_is_battery_present,
 	.is_battery_temp_within_range	= bq27541_is_battery_temp_within_range,
 	.is_battery_id_valid		= bq27541_is_battery_id_valid,
+	.get_batt_charge_now		= bq27541_get_batt_charge_now,
 	.get_batt_design_capacity	= bq27541_get_batt_design_capacity,
 	.get_batt_remaining_capacity	= bq27541_get_batt_remaining_capacity,
 	.get_batt_full_chg_capacity	= bq27541_get_batt_full_chg_capacity,
@@ -1158,31 +1193,28 @@ static struct external_battery_gauge bq27541_batt_gauge = {
 #define LOW_BAT_SOC_UPDATE_MS 6000
 #define RESUME_SCHDULE_SOC_UPDATE_WORK_MS 60000
 
-static int is_usb_pluged(void)
+static bool is_usb_pluged(void)
 {
-	static struct power_supply *psy;
-	union power_supply_propval ret = {0,};
-	int Vbus, rc; /* david@bsp modified */
+	struct power_supply *psy;
+	union power_supply_propval present = { 0 };
+	int rc;
 
+	psy = power_supply_get_by_name("usb");
 	if (!psy) {
-		psy = power_supply_get_by_name("battery");
-		if (!psy) {
-			pr_err("failed to get ps battery\n");
-			return -EINVAL;
-		}
-	}
-
-	/* david@bsp modified */
-	rc = power_supply_get_property(psy, POWER_SUPPLY_PROP_CHARGE_NOW, &ret);
-	if (rc) {
-		pr_err("failed to get POWER_SUPPLY_PROP_CHARGE_NOW\n");
-		return -EINVAL;
-	}
-	if (ret.intval <= 0)
+		pr_err_ratelimited("failed to get usb power supply\n");
 		return false;
+	}
 
-	Vbus = ret.intval;
-	return (Vbus > 2500) ? true : false;
+	rc = power_supply_get_property(psy, POWER_SUPPLY_PROP_PRESENT,
+				       &present);
+	power_supply_put(psy);
+	if (rc < 0) {
+		pr_err_ratelimited("failed to get USB present status, rc=%d\n",
+				   rc);
+		return false;
+	}
+
+	return !!present.intval;
 }
 
 static bool get_dash_started(void)
@@ -1224,6 +1256,7 @@ static void update_battery_soc_work(struct work_struct *work)
 	bq27541_get_average_current();
 	bq27541_get_battery_temperature();
 	bq27541_get_battery_soc();
+	bq27541_get_batt_charge_now();
 	bq27541_get_batt_remaining_capacity();
 	pr_debug("battery remain capacity:%d\n",
 				bq27541_get_batt_health());
@@ -1257,6 +1290,7 @@ static void gauge_set_cmd_addr(int device_type)
 	if (device_type == DEVICE_BQ27541) {
 		bq27541_di->cmd_addr.reg_temp = BQ27541_REG_TEMP;
 		bq27541_di->cmd_addr.reg_volt = BQ27541_REG_VOLT;
+		bq27541_di->cmd_addr.reg_nac = BQ27541_REG_NAC;
 		bq27541_di->cmd_addr.reg_rm = BQ27541_REG_RM;
 		bq27541_di->cmd_addr.reg_ai = BQ27541_REG_AI;
 		bq27541_di->cmd_addr.reg_soc = BQ27541_REG_SOC;
@@ -1264,6 +1298,7 @@ static void gauge_set_cmd_addr(int device_type)
 	} else { /* device_bq27411 */
 		bq27541_di->cmd_addr.reg_temp = BQ27411_REG_TEMP;
 		bq27541_di->cmd_addr.reg_volt = BQ27411_REG_VOLT;
+		bq27541_di->cmd_addr.reg_nac = BQ27411_REG_NAC;
 		bq27541_di->cmd_addr.reg_rm = BQ27411_REG_RM;
 		bq27541_di->cmd_addr.reg_ai = BQ27411_REG_AI;
 		bq27541_di->cmd_addr.reg_soc = BQ27411_REG_SOC;
@@ -1535,6 +1570,7 @@ static void update_pre_capacity_func(struct work_struct *w)
 	bq27541_set_allow_reading(true);
 	bq27541_get_battery_temperature();
 	bq27541_battery_soc(bq27541_di, update_pre_capacity_data.suspend_time);
+	bq27541_get_batt_charge_now();
 	bq27541_get_batt_remaining_capacity();
 	bq27541_get_batt_full_chg_capacity();
 	bq27541_set_allow_reading(false);
@@ -1983,7 +2019,8 @@ static int bq27541_battery_probe(struct i2c_client *client,
 
 	new_client = client;
 
-	wakeup_source_init(&di->update_soc_wake_lock, "bq_delt_soc_wake_lock");
+	di->update_soc_wake_lock.name = "bq_delt_soc_wake_lock";
+	wakeup_source_add(&di->update_soc_wake_lock);
 	di->soc_pre = DEFAULT_INVALID_SOC_PRE;
 	di->temp_pre = 0;
 #ifndef CONFIG_GAUGE_BQ27411

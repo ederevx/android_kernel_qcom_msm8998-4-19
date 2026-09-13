@@ -12,7 +12,31 @@
 #include <linux/extcon-provider.h>
 #include "storm-watch.h"
 #include "battery.h"
+
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
 #include <linux/power/oem_external_fg.h>
+#include <linux/pm_wakeup.h>
+#endif
+
+struct apsd_result {
+	const char * const name;
+	const u8 bit;
+	const enum power_supply_type pst;
+};
+
+#define smblib_err(chg, fmt, ...)		\
+	pr_err("%s: %s: " fmt, chg->name,	\
+		__func__, ##__VA_ARGS__)	\
+
+#define smblib_dbg(chg, reason, fmt, ...)			\
+	do {							\
+		if (*chg->debug_mask & (reason))		\
+			pr_info("%s: %s: " fmt, chg->name,	\
+				__func__, ##__VA_ARGS__);	\
+		else						\
+			pr_debug("%s: %s: " fmt, chg->name,	\
+				__func__, ##__VA_ARGS__);	\
+	} while (0)
 
 enum print_reason {
 	PR_INTERRUPT	= BIT(0),
@@ -20,67 +44,54 @@ enum print_reason {
 	PR_MISC		= BIT(2),
 	PR_PARALLEL	= BIT(3),
 	PR_OTG		= BIT(4),
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	PR_OP_DEBUG	= BIT(5),
+#endif
 };
 
-#define BATT_TYPE_FCC_VOTER		"BATT_TYPE_FCC_VOTER"
-#define PSY_ICL_VOTER			"PSY_ICL_VOTER"
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+/* DASH fast-charge state machine */
 #define TEMP_REGION_MAX			9
 #define NON_STANDARD_CHARGER_CHECK_S	90
 #define TIME_1000MS			1000
+#define TIME_200MS			200
+#define TIME_100MS			100
+#define TIME_3S				3000
 #define REDET_COUTNT			5
 #define APSD_CHECK_COUTNT		15
 #define DASH_CHECK_COUNT		4
 #define BOOST_BACK_COUNT		8
-#define TIME_200MS			200
-#define TIME_100MS			100
+#define HEARTBEAT_INTERVAL_MS		6000
+#define CHG_TIMEOUT_COUNT		6000 /* 10hr */
+#define SOC_INVALID			0x7E
+#define SOC_DATA_REG_0			0x88D
+#define BATT_SOFT_OVP_MV		4500
+#define CHG_VOLTAGE_NORMAL		5000
+#define BATT_REMOVE_TEMP		-400
+#define BATT_TEMP_HYST			20
+#define DEFAULT_SDP_MA			500
+#define DEFAULT_CDP_MA			1500
+#define DEFAULT_DCP_MA			1500
+#define DEFAULT_AGAING_CHG_MA		1000
+#endif
 
-#define TIME_3S				3000
+#define USBIN_25MA			25000
+#define USBIN_100MA			100000
+#define USBIN_150MA			150000
+#define USBIN_500MA			500000
+#define USBIN_900MA			900000
 
-#define DEFAULT_VOTER			"DEFAULT_VOTER"
-#define USER_VOTER			"USER_VOTER"
-#define PD_VOTER			"PD_VOTER"
-#define DCP_VOTER			"DCP_VOTER"
-#define QC_VOTER			"QC_VOTER"
-#define PL_USBIN_USBIN_VOTER		"PL_USBIN_USBIN_VOTER"
-#define USB_PSY_VOTER			"USB_PSY_VOTER"
-#define PL_TAPER_WORK_RUNNING_VOTER	"PL_TAPER_WORK_RUNNING_VOTER"
-#define PL_QNOVO_VOTER			"PL_QNOVO_VOTER"
-#define USBIN_V_VOTER			"USBIN_V_VOTER"
-#define CHG_STATE_VOTER			"CHG_STATE_VOTER"
-#define TYPEC_SRC_VOTER			"TYPEC_SRC_VOTER"
-#define TAPER_END_VOTER			"TAPER_END_VOTER"
-#define THERMAL_DAEMON_VOTER		"THERMAL_DAEMON_VOTER"
-#define CC_DETACHED_VOTER		"CC_DETACHED_VOTER"
-#define HVDCP_TIMEOUT_VOTER		"HVDCP_TIMEOUT_VOTER"
-#define PD_DISALLOWED_INDIRECT_VOTER	"PD_DISALLOWED_INDIRECT_VOTER"
-#define PD_HARD_RESET_VOTER		"PD_HARD_RESET_VOTER"
-#define VBUS_CC_SHORT_VOTER		"VBUS_CC_SHORT_VOTER"
-#define PD_INACTIVE_VOTER		"PD_INACTIVE_VOTER"
-#define BOOST_BACK_VOTER		"BOOST_BACK_VOTER"
-#define USBIN_USBIN_BOOST_VOTER		"USBIN_USBIN_BOOST_VOTER"
-#define HVDCP_INDIRECT_VOTER		"HVDCP_INDIRECT_VOTER"
-#define MICRO_USB_VOTER			"MICRO_USB_VOTER"
-#define DEBUG_BOARD_VOTER		"DEBUG_BOARD_VOTER"
-#define PD_SUSPEND_SUPPORTED_VOTER	"PD_SUSPEND_SUPPORTED_VOTER"
-#define PL_DELAY_VOTER			"PL_DELAY_VOTER"
-#define CTM_VOTER			"CTM_VOTER"
-#define SW_QC3_VOTER			"SW_QC3_VOTER"
-#define AICL_RERUN_VOTER		"AICL_RERUN_VOTER"
-#define LEGACY_UNKNOWN_VOTER		"LEGACY_UNKNOWN_VOTER"
-#define CC2_WA_VOTER			"CC2_WA_VOTER"
-#define QNOVO_VOTER			"QNOVO_VOTER"
-#define BATT_PROFILE_VOTER		"BATT_PROFILE_VOTER"
-#define OTG_DELAY_VOTER			"OTG_DELAY_VOTER"
-#define USBIN_I_VOTER			"USBIN_I_VOTER"
-#define WEAK_CHARGER_VOTER		"WEAK_CHARGER_VOTER"
-#define WBC_VOTER			"WBC_VOTER"
-#define OV_VOTER			"OV_VOTER"
-#define FCC_STEPPER_VOTER		"FCC_STEPPER_VOTER"
+#define MICRO_5V			5000000
+#define MICRO_9V			9000000
+#define MICRO_12V			12000000
 
-#define VCONN_MAX_ATTEMPTS	3
-#define OTG_MAX_ATTEMPTS	3
-#define BOOST_BACK_STORM_COUNT	3
-#define WEAK_CHG_STORM_COUNT	8
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+#define DEFAULT_WALL_CHG_MA		1800
+#define DEFAULT_BATT_CAPACITY		50
+#define DEFAULT_BATT_TEMP		200
+#define DEFAULT_BATT_CURRENT_NOW	0
+#define DEFAULT_BATT_VOLTAGE_NOW	0
+#endif
 
 #define DEFAULT_VOTER			"DEFAULT_VOTER"
 #define USER_VOTER			"USER_VOTER"
@@ -314,7 +325,6 @@ struct smb_charger {
 	struct mutex		ps_change_lock;
 	struct mutex		otg_oc_lock;
 	struct mutex		vconn_oc_lock;
-	struct mutex		sw_dash_lock;
 
 	/* power supplies */
 	struct power_supply		*batt_psy;
@@ -328,9 +338,6 @@ struct smb_charger {
 
 	/* notifiers */
 	struct notifier_block	nb;
-#if defined(CONFIG_FB)
-	struct notifier_block	fb_notif;
-#endif /* CONFIG_FB */
 
 	/* parallel charging */
 	struct parallel_params	pl;
@@ -358,33 +365,15 @@ struct smb_charger {
 	struct votable		*hvdcp_hw_inov_dis_votable;
 	struct votable		*usb_irq_enable_votable;
 	struct votable		*typec_irq_disable_votable;
-	struct votable          *disable_power_role_switch;
+	struct votable		*disable_power_role_switch;
 
-	struct work_struct      pl_update_work;
-int                     fake_batt_status;
-int                     qc2_max_pulses;
-bool                    non_compliant_chg_detected;
-bool                    is_audio_adapter;
-struct charger_param    chg_param;
-bool                    disable_stat_sw_override;
-int                     *audio_headset_drp_wait_ms;
-int                     die_health;
 	/* work */
 	struct work_struct	bms_update_work;
+	struct work_struct	pl_update_work;
 	struct work_struct	rdstd_cc2_detach_work;
 	struct delayed_work	hvdcp_detect_work;
 	struct delayed_work	ps_change_timeout_work;
-	struct delayed_work	rechk_sw_dsh_work;
-	struct delayed_work	re_kick_work;
-	struct delayed_work	recovery_suspend_work;
-	struct delayed_work	check_switch_dash_work;
-	struct delayed_work	non_standard_charger_check_work;
-	struct delayed_work	heartbeat_work;
-	struct delayed_work	re_det_work;
-	struct delayed_work	op_re_set_work;
-	struct delayed_work	op_check_apsd_work;
 	struct delayed_work	clear_hdc_work;
-	struct wakeup_source    chg_wake_lock;
 	struct work_struct	otg_oc_work;
 	struct work_struct	vconn_oc_work;
 	struct delayed_work	otg_ss_done_work;
@@ -395,66 +384,6 @@ int                     die_health;
 	struct delayed_work	bb_removal_work;
 
 	/* cached status */
-	int			BATT_TEMP_T0;
-	int			BATT_TEMP_T1;
-	int			BATT_TEMP_T2;
-	int			BATT_TEMP_T3;
-	int			BATT_TEMP_T4;
-	int			BATT_TEMP_T5;
-	int			BATT_TEMP_T6;
-	int			batt_health;
-	int			ibatmax[TEMP_REGION_MAX];
-	int			vbatmax[TEMP_REGION_MAX];
-	int			vbatdet[TEMP_REGION_MAX];
-	int			fake_chgvol;
-	int			fake_temp;
-	int			fake_protect_sts;
-	int			non_stand_chg_current;
-	int			non_stand_chg_count;
-	int			redet_count;
-	int			reset_count;
-	int			dump_count;
-	int			ck_apsd_count;
-	int			ck_dash_count;
-	int			recovery_boost_count;
-
-	bool			otg_switch;
-	bool			use_fake_chgvol;
-	bool			use_fake_temp;
-	bool			use_fake_protect_sts;
-	bool			vbus_present;
-	bool			hvdcp_present;
-	bool			dash_present;
-	bool			charger_collpse;
-	bool			usb_enum_status;
-	bool			non_std_chg_present;
-	bool			usb_type_redet_done;
-	bool			time_out;
-	bool			disable_normal_chg_for_dash;
-	bool			ship_mode;
-	bool			dash_on;
-	bool			chg_ovp;
-	bool			is_power_changed;
-	bool			recharge_pending;
-	bool			recharge_status;
-	bool			temp_littel_cool_set_current_0_point_25c;
-	bool			oem_lcd_is_on;
-	bool			chg_enabled;
-	bool			pd_disabled;
-	bool			op_apsd_done;
-	bool			re_trigr_dash_done;
-	bool			boot_usb_present;
-	bool			is_aging_test;
-	bool			revert_boost_trigger;
-	enum temp_region_type	mBattTempRegion;
-	enum batt_status_type	battery_status;
-	short			mBattTempBoundT0;
-	short			mBattTempBoundT1;
-	short			mBattTempBoundT2;
-	short			mBattTempBoundT3;
-	short			mBattTempBoundT4;
-	short			mBattTempBoundT5;
-	short			mBattTempBoundT6;
 	int			voltage_min_uv;
 	int			voltage_max_uv;
 	int			pd_active;
@@ -465,12 +394,14 @@ int                     die_health;
 	int			*thermal_mitigation;
 	int			dcp_icl_ua;
 	int			fake_capacity;
+	int			fake_batt_status;
 	bool			step_chg_enabled;
 	bool			sw_jeita_enabled;
 	bool			is_hdc;
 	bool			chg_done;
-	bool                    connector_type;
-	bool			micro_usb_mode;
+	bool			vbus_present;
+	bool			dash_on;
+	bool			connector_type;
 	bool			otg_en;
 	bool			vconn_en;
 	bool			suspend_input_on_debug_batt;
@@ -491,7 +422,8 @@ int                     die_health;
 	u8			float_cfg;
 	bool			use_extcon;
 	bool			otg_present;
-	bool			fcc_stepper_mode;
+	bool			is_audio_adapter;
+	bool			disable_stat_sw_override;
 	bool			in_chg_lock;
 	bool			fcc_stepper_enable;
 	bool			ufp_only_mode;
@@ -503,6 +435,8 @@ int                     die_health;
 	bool			try_sink_active;
 	int			boost_current_ua;
 	int			temp_speed_reading_count;
+	int			qc2_max_pulses;
+	bool			non_compliant_chg_detected;
 	bool			fake_usb_insertion;
 	bool			reddragon_ipc_wa;
 
@@ -516,15 +450,83 @@ int                     die_health;
 	/* qnovo */
 	int			usb_icl_delta_ua;
 	int			pulse_cnt;
-};
 
-int smblib_set_prop_charge_parameter_set(struct smb_charger *chg);
-extern void set_mcu_en_gpio_value(int value);
-extern void usb_sw_gpio_set(int value);
-extern bool op_set_fast_chg_allow(struct smb_charger *chg, bool enable);
-extern bool get_prop_fast_chg_started(struct smb_charger *chg);
-extern void mcu_en_gpio_set(int value);
-extern void switch_mode_to_normal(void);
+	int			die_health;
+	/* last soc */
+	int			last_soc;
+
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	/* DASH fast-charge state machine */
+	struct mutex		sw_dash_lock;
+
+	struct delayed_work	rechk_sw_dsh_work;
+	struct work_struct	re_kick_work;
+	struct delayed_work	recovery_suspend_work;
+	struct delayed_work	check_switch_dash_work;
+	struct delayed_work	non_standard_charger_check_work;
+	struct delayed_work	heartbeat_work;
+	struct delayed_work	re_det_work;
+	struct delayed_work	op_re_set_work;
+	struct delayed_work	op_check_apsd_work;
+	struct wakeup_source	chg_wake_lock;
+	struct notifier_block	fb_notif;
+
+	int			BATT_TEMP_T0;
+	int			BATT_TEMP_T1;
+	int			BATT_TEMP_T2;
+	int			BATT_TEMP_T3;
+	int			BATT_TEMP_T4;
+	int			BATT_TEMP_T5;
+	int			BATT_TEMP_T6;
+	int			ibatmax[TEMP_REGION_MAX];
+	int			vbatmax[TEMP_REGION_MAX];
+	int			vbatdet[TEMP_REGION_MAX];
+	int			fake_temp;
+	int			fake_protect_sts;
+	int			non_stand_chg_current;
+	int			non_stand_chg_count;
+	int			redet_count;
+	int			reset_count;
+	int			dump_count;
+	int			ck_apsd_count;
+	int			ck_dash_count;
+	int			recovery_boost_count;
+
+	bool			otg_switch;
+	bool			use_fake_temp;
+	bool			use_fake_protect_sts;
+	bool			dash_present;
+	bool			charger_collpse;
+	bool			usb_enum_status;
+	bool			non_std_chg_present;
+	bool			usb_type_redet_done;
+	bool			time_out;
+	bool			disable_normal_chg_for_dash;
+	bool			chg_ovp;
+	bool			is_power_changed;
+	bool			recharge_pending;
+	bool			recharge_status;
+	bool			temp_littel_cool_set_current_0_point_25c;
+	bool			oem_lcd_is_on;
+	bool			chg_enabled;
+	bool			pd_disabled;
+	bool			op_apsd_done;
+	bool			re_trigr_dash_done;
+	bool			boot_usb_present;
+	bool			is_aging_test;
+	bool			revert_boost_trigger;
+
+	enum temp_region_type	mBattTempRegion;
+	enum batt_status_type	battery_status;
+	short			mBattTempBoundT0;
+	short			mBattTempBoundT1;
+	short			mBattTempBoundT2;
+	short			mBattTempBoundT3;
+	short			mBattTempBoundT4;
+	short			mBattTempBoundT5;
+	short			mBattTempBoundT6;
+#endif
+};
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
 int smblib_masked_write(struct smb_charger *chg, u16 addr, u8 mask, u8 val);
@@ -572,6 +574,7 @@ irqreturn_t smblib_handle_dc_plugin(int irq, void *data);
 irqreturn_t smblib_handle_high_duty_cycle(int irq, void *data);
 irqreturn_t smblib_handle_switcher_power_ok(int irq, void *data);
 irqreturn_t smblib_handle_wdog_bark(int irq, void *data);
+
 int smblib_get_prop_input_suspend(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_batt_present(struct smb_charger *chg,
@@ -586,8 +589,6 @@ int smblib_get_prop_batt_charge_done(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_batt_health(struct smb_charger *chg,
 				union power_supply_propval *val);
-int smblib_set_prop_chg_protect_status(struct smb_charger *chg,
-                                const union power_supply_propval *val);
 int smblib_get_prop_system_temp_level(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_get_prop_system_temp_level_max(struct smb_charger *chg,
@@ -602,26 +603,6 @@ int smblib_set_prop_batt_status(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_system_temp_level(struct smb_charger *chg,
 				const union power_supply_propval *val);
-int get_prop_fast_adapter_update(struct smb_charger *chg);
-void op_handle_usb_plugin(struct smb_charger *chg);
-int op_rerun_apsd(struct smb_charger *chg);
-irqreturn_t smblib_handle_aicl_done(int irq, void *data);
-void op_charge_info_init(struct smb_charger *chg);
-int update_dash_unplug_status(void);
-int get_prop_batt_status(struct smb_charger *chg);
-int get_prop_chg_protect_status(struct smb_charger *chg);
-int op_set_prop_otg_switch(struct smb_charger *chg,
-				const union power_supply_propval *val);
-int check_allow_switch_dash(struct smb_charger *chg,
-				const union power_supply_propval *val);
-int smblib_set_prop_chg_voltage(struct smb_charger *chg,
-                                const union power_supply_propval *val);
-int smblib_set_prop_batt_temp(struct smb_charger *chg,
-                                const union power_supply_propval *val);
-bool op_get_fastchg_ing(struct smb_charger *chg);
-bool get_prop_fastchg_status(struct smb_charger *chg);
-int op_usb_icl_set(struct smb_charger *chg, int icl_ua);
-int op_get_aicl_result(struct smb_charger *chg);
 int smblib_set_prop_input_current_limited(struct smb_charger *chg,
 				const union power_supply_propval *val);
 
@@ -721,4 +702,109 @@ int smblib_force_ufp(struct smb_charger *chg);
 
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+/* smb-lib-dash.c: DASH fast-charge integration */
+void op_dash_charger_init(struct smb_charger *chg);
+void op_dash_charger_deinit(struct smb_charger *chg);
+
+bool get_prop_fast_chg_started(struct smb_charger *chg);
+enum temp_region_type op_battery_temp_region_get(struct smb_charger *chg);
+int op_charging_en(struct smb_charger *chg, bool en);
+int op_check_battery_temp(struct smb_charger *chg);
+int op_contrl(int enable, bool check_power_ok);
+int op_set_collapse_fet(struct smb_charger *chg, bool on);
+void op_handle_usb_removal(struct smb_charger *chg);
+void op_dump_regs(struct smb_charger *chip);
+
+void op_charge_info_init(struct smb_charger *chg);
+int get_prop_batt_status(struct smb_charger *chg);
+int get_prop_chg_protect_status(struct smb_charger *chg);
+bool get_prop_fastchg_status(struct smb_charger *chg);
+bool op_get_fastchg_ing(struct smb_charger *chg);
+bool op_set_fast_chg_allow(struct smb_charger *chg, bool enable);
+int update_dash_unplug_status(void);
+int check_allow_switch_dash(struct smb_charger *chg,
+			const union power_supply_propval *val);
+void switch_mode_to_normal(void);
+int op_usb_icl_set(struct smb_charger *chg, int icl_ua);
+int smblib_set_prop_chg_voltage(struct smb_charger *chg,
+			const union power_supply_propval *val);
+int smblib_set_prop_chg_protect_status(struct smb_charger *chg,
+			const union power_supply_propval *val);
+int smblib_set_prop_charge_parameter_set(struct smb_charger *chg);
+int smblib_set_prop_batt_temp(struct smb_charger *chg,
+			const union power_supply_propval *val);
+int get_prop_batt_capacity(struct smb_charger *chg);
+int get_prop_fg_capacity(struct smb_charger *chg);
+int get_prop_batt_voltage_now(struct smb_charger *chg);
+int get_prop_fg_voltage_now(struct smb_charger *chg);
+int get_prop_batt_current_now(struct smb_charger *chg);
+int get_prop_fg_current_now(struct smb_charger *chg);
+int get_prop_batt_temp(struct smb_charger *chg);
+int set_property_on_fg(struct smb_charger *chg,
+			enum power_supply_property prop, int val);
+
+void smblib_usb_plugin_locked(struct smb_charger *chg);
+const struct apsd_result *smblib_get_apsd_result(struct smb_charger *chg);
+const struct apsd_result *smblib_update_usb_type(struct smb_charger *chg);
+void smblib_rerun_apsd(struct smb_charger *chg);
+int smblib_set_usb_pd_allowed_voltage(struct smb_charger *chg,
+				int min_allowed_uv, int max_allowed_uv);
+
+/* platform integration hooks, implemented in smb-lib-dash.c */
+bool op_switcher_power_ok_skip(struct smb_charger *chg, const char *irq_name);
+bool op_reverse_boost_bounce(struct smb_charger *chg);
+void op_boot_usb_present_init(struct smb_charger *chg, bool usb_present);
+void op_charge_done_check(struct smb_charger *chg, int stat);
+bool op_dash_active(struct smb_charger *chg);
+bool op_pd_disabled(struct smb_charger *chg);
+
+/* oneplus_fastcg.c */
+extern void set_mcu_en_gpio_value(int value);
+extern void usb_sw_gpio_set(int value);
+extern void mcu_en_gpio_set(int value);
+#else
+static inline bool op_switcher_power_ok_skip(struct smb_charger *chg,
+					     const char *irq_name)
+{
+	return false;
+}
+
+static inline bool op_reverse_boost_bounce(struct smb_charger *chg)
+{
+	return false;
+}
+
+static inline void op_boot_usb_present_init(struct smb_charger *chg,
+					    bool usb_present)
+{
+}
+
+static inline void op_dash_charger_init(struct smb_charger *chg)
+{
+}
+
+static inline void op_dash_charger_deinit(struct smb_charger *chg)
+{
+}
+
+static inline void op_charge_info_init(struct smb_charger *chg)
+{
+}
+
+static inline void op_charge_done_check(struct smb_charger *chg, int stat)
+{
+}
+
+static inline bool op_dash_active(struct smb_charger *chg)
+{
+	return false;
+}
+
+static inline bool op_pd_disabled(struct smb_charger *chg)
+{
+	return false;
+}
+#endif
 #endif /* __SMB2_CHARGER_H */

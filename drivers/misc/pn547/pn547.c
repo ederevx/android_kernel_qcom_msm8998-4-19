@@ -39,10 +39,6 @@
 #include <linux/of_gpio.h>
 #include <linux/pinctrl/consumer.h>
 
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-#include <mach/msm_xo.h>
-#include <linux/workqueue.h>
-#endif
 #ifdef CONFIG_NFC_PN547_PMC_CLK_REQ
 #include <linux/clk.h>
 #endif
@@ -75,32 +71,30 @@ struct pn547_dev {
 	atomic_t irq_enabled;
 	atomic_t read_flag;
 	bool cancel_read;
-	struct wakeup_source nfc_wake_lock;
 #ifdef CONFIG_NFC_PN547_PMC_CLK_REQ
 	struct clk *nfc_clk;
 #endif
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	unsigned int clk_req_gpio;
-	unsigned int clk_req_irq;
-	struct msm_xo_voter *nfc_clock;
-	struct work_struct work_nfc_clock;
-	struct workqueue_struct *wq_clock;
-	bool clock_state;
-#endif
 	unsigned int pvdd_en_gpio;
 };
+
+static void pn547_irq_toggle(struct pn547_dev *pn547_dev, bool en)
+{
+	if (atomic_read(&pn547_dev->irq_enabled) != en) {
+		atomic_set(&pn547_dev->irq_enabled, en);
+		if (en) {
+			enable_irq(pn547_dev->client->irq);
+			enable_irq_wake(pn547_dev->client->irq);
+		} else {
+			disable_irq_wake(pn547_dev->client->irq);
+			disable_irq_nosync(pn547_dev->client->irq);
+		}
+	}
+}
 
 static irqreturn_t pn547_dev_irq_handler(int irq, void *dev_id)
 {
 	struct pn547_dev *pn547_dev = dev_id;
-
-	if (!gpio_get_value(pn547_dev->irq_gpio)) {
-#if NFC_DEBUG
-		pr_err("%s, irq_gpio = %d\n", __func__,
-			gpio_get_value(pn547_dev->irq_gpio));
-#endif
-		return IRQ_HANDLED;
-	}
 
 	/* Wake up waiting readers */
 	atomic_set(&pn547_dev->read_flag, 1);
@@ -110,47 +104,9 @@ static irqreturn_t pn547_dev_irq_handler(int irq, void *dev_id)
 #if NFC_DEBUG
 	pr_info("pn547 : call\n");
 #endif
-	__pm_wakeup_event(&pn547_dev->nfc_wake_lock, 2000);
+	pm_wakeup_event(&pn547_dev->client->dev, 2000);
 	return IRQ_HANDLED;
 }
-
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-static void nfc_work_func_clock(struct work_struct *work)
-{
-	struct pn547_dev *pn547_dev = container_of(work, struct pn547_dev,
-					      work_nfc_clock);
-	int ret = 0;
-
-	if (gpio_get_value(pn547_dev->clk_req_gpio)) {
-		if (pn547_dev->clock_state == false) {
-			ret = msm_xo_mode_vote(pn547_dev->nfc_clock,
-						MSM_XO_MODE_ON);
-			if (ret < 0) {
-				pr_err("%s:  Failed to vote for TCX0_A1 ON (%d)\n",
-						__func__, ret);
-			}
-			pn547_dev->clock_state = true;
-		}
-	} else {
-		if (pn547_dev->clock_state == true) {
-			ret = msm_xo_mode_vote(pn547_dev->nfc_clock,
-						MSM_XO_MODE_OFF);
-			if (ret < 0) {
-				pr_err("%s:  Failed to vote for TCX0_A1 OFF (%d)\n",
-						__func__, ret);
-			}
-			pn547_dev->clock_state = false;
-		}
-	}
-}
-
-static irqreturn_t pn547_dev_clk_req_irq_handler(int irq, void *dev_id)
-{
-	struct pn547_dev *pn547_dev = dev_id;
-	queue_work(pn547_dev->wq_clock, &pn547_dev->work_nfc_clock);
-	return IRQ_HANDLED;
-}
-#endif
 
 static ssize_t pn547_dev_read(struct file *filp, char __user *buf,
 			      size_t count, loff_t *offset)
@@ -195,23 +151,30 @@ wait_irq:
 #if NFC_DEBUG
 		pr_info("pn547: wait_event_interruptible : in\n");
 #endif
-		if (!gpio_get_value(pn547_dev->irq_gpio))
+		while (1) {
+			pn547_irq_toggle(pn547_dev, true);
+
 			ret = wait_event_interruptible(pn547_dev->read_wq,
 				atomic_read(&pn547_dev->read_flag));
 
+			pn547_irq_toggle(pn547_dev, false);
+
+			if (pn547_dev->cancel_read) {
+				pn547_dev->cancel_read = false;
+				ret = -1;
+				goto fail;
+			}
+
+			if (ret)
+				goto fail;
+
+			if (gpio_get_value(pn547_dev->irq_gpio))
+				break;
+
 #if NFC_DEBUG
-		pr_info("pn547 :   h\n");
+			pr_info("pn547 : spurious intr\n");
 #endif
-
-		if (pn547_dev->cancel_read) {
-			pn547_dev->cancel_read = false;
-			ret = -1;
-			goto fail;
 		}
-
-		if (ret)
-			goto fail;
-
 	}
 
 	/* Read data */
@@ -373,14 +336,8 @@ static long pn547_dev_ioctl(struct file *filp,
 			usleep_range(10000, 10050);
 			gpio_set_value_cansleep(pn547_dev->ven_gpio, 1);
 			usleep_range(10000, 10050);
-			if (atomic_read(&pn547_dev->irq_enabled) == 0) {
-				atomic_set(&pn547_dev->irq_enabled, 1);
-				enable_irq(pn547_dev->client->irq);
-				enable_irq_wake(pn547_dev->client->irq);
-			}
 			state = PN547_STATE_FWDL;
-			pr_info("%s power on with firmware, irq=%d\n", __func__,
-				atomic_read(&pn547_dev->irq_enabled));
+			pr_info("%s power on with firmware\n", __func__);
 		} else if (arg == 1) {
 			/* power on */
 			if (pn547_dev->conf_gpio)
@@ -388,23 +345,11 @@ static long pn547_dev_ioctl(struct file *filp,
 			gpio_set_value(pn547_dev->firm_gpio, 0);
 			gpio_set_value_cansleep(pn547_dev->ven_gpio, 1);
 			usleep_range(10000, 10050);
-			if (atomic_read(&pn547_dev->irq_enabled) == 0) {
-				atomic_set(&pn547_dev->irq_enabled, 1);
-				enable_irq(pn547_dev->client->irq);
-				enable_irq_wake(pn547_dev->client->irq);
-			}
 			state = PN547_STATE_ON;
-			pr_info("%s power on, irq=%d\n", __func__,
-				atomic_read(&pn547_dev->irq_enabled));
+			pr_info("%s power on\n", __func__);
 		} else if (arg == 0) {
 			/* power off */
-			if (atomic_read(&pn547_dev->irq_enabled) == 1) {
-				atomic_set(&pn547_dev->irq_enabled, 0);
-				disable_irq_wake(pn547_dev->client->irq);
-				disable_irq_nosync(pn547_dev->client->irq);
-			}
-			pr_info("%s power off, irq=%d\n", __func__,
-				atomic_read(&pn547_dev->irq_enabled));
+			pr_info("%s power off\n", __func__);
 			gpio_set_value(pn547_dev->firm_gpio, 0);
 			gpio_set_value_cansleep(pn547_dev->ven_gpio, 0);
 			usleep_range(10000, 10050);
@@ -461,15 +406,18 @@ static int pn547_parse_dt(struct device *dev,
 	pdata->pvdd_en_gpio = of_get_named_gpio_flags(np, "nxp,pvdd_en",
 		0, &pdata->pvdd_en_gpio_flags);
 
+	pdata->clk_req_gpio = of_get_named_gpio_flags(np, "nxp,clk_req",
+		0, &pdata->clk_req_gpio_flags);
+
 	if (pdata->firm_gpio < 0)
 		of_property_read_u32(np, "nxp,firm-expander-gpio",
 			&pdata->firm_gpio);
 
 	is_pn544 = of_property_read_bool(np, "nxp,use_pn544");
 
-	pr_info("%s: irq : %d, ven : %d, firm : %d, pvdd_en : %d\n",
-			__func__, pdata->irq_gpio, pdata->ven_gpio,
-			pdata->firm_gpio, pdata->pvdd_en_gpio);
+	pr_info("%s: irq : %d, ven : %d, firm : %d, pvdd_en : %d "
+			"clk_req : %d\n", __func__, pdata->irq_gpio, pdata->ven_gpio,
+			pdata->firm_gpio, pdata->pvdd_en_gpio, pdata->clk_req_gpio);
 
 	return 0;
 }
@@ -552,11 +500,9 @@ static int pn547_probe(struct i2c_client *client,
 	ret = gpio_request(platform_data->firm_gpio, "nfc_firm");
 	if (ret)
 		goto err_firm;
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	ret = gpio_request(platform_data->clk_req_gpio, "nfc_clk_req");
 	if (ret)
 		goto err_clk_req;
-#endif
 	if (gpio_is_valid(platform_data->pvdd_en_gpio)) {
 		ret = gpio_request(platform_data->pvdd_en_gpio, "nfc_pvdd_en");
 		if (ret)
@@ -571,17 +517,6 @@ static int pn547_probe(struct i2c_client *client,
 		ret = -ENOMEM;
 		goto err_exit;
 	}
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-	pn547_dev->nfc_clock = msm_xo_get(MSM_XO_TCXO_A1, "nfc");
-	if (IS_ERR(pn547_dev->nfc_clock)) {
-		ret = PTR_ERR(pn547_dev->nfc_clock);
-		printk(KERN_ERR "%s: Couldn't get TCXO_A1 vote for NFC (%d)\n",
-					__func__, ret);
-		ret = -ENODEV;
-		goto err_get_clock;
-	}
-	pn547_dev->clock_state = false;
-#endif
 #ifdef CONFIG_NFC_PN547_PMC_CLK_REQ
 	pn547_dev->nfc_clk = clk_get(&client->dev, "nfc_clk");
 	if (IS_ERR(pn547_dev->nfc_clk)) {
@@ -601,10 +536,8 @@ static int pn547_probe(struct i2c_client *client,
 	pn547_dev->firm_gpio = platform_data->firm_gpio;
 	pn547_dev->conf_gpio = platform_data->conf_gpio;
 	pn547_dev->pvdd_en_gpio = platform_data->pvdd_en_gpio;
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	pn547_dev->clk_req_gpio = platform_data->clk_req_gpio;
-	pn547_dev->clk_req_irq = platform_data->clk_req_irq;
-#endif
+
 	pn547_dev->client = client;
 	pn547_dev->state = PN547_STATE_UNKNOWN;
 
@@ -636,21 +569,9 @@ static int pn547_probe(struct i2c_client *client,
 	gpio_direction_output(pn547_dev->ven_gpio, 0);
 	gpio_direction_output(pn547_dev->firm_gpio, 0);
 	gpio_direction_output(pn547_dev->pvdd_en_gpio, 0);
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	gpio_direction_input(pn547_dev->clk_req_gpio);
-#endif
 
 	i2c_set_clientdata(client, pn547_dev);
-	wakeup_source_init(&pn547_dev->nfc_wake_lock, "nfc_wake_lock");
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-	pn547_dev->wq_clock = create_singlethread_workqueue("nfc_wq");
-	if (!pn547_dev->wq_clock) {
-		ret = -ENOMEM;
-		pr_err("%s: could not create workqueue\n", __func__);
-		goto err_create_workqueue;
-	}
-	INIT_WORK(&pn547_dev->work_nfc_clock, nfc_work_func_clock);
-#endif
 	ret = request_irq(client->irq, pn547_dev_irq_handler,
 			  IRQF_TRIGGER_RISING, "pn547", pn547_dev);
 	if (ret) {
@@ -660,17 +581,8 @@ static int pn547_probe(struct i2c_client *client,
 	disable_irq_nosync(pn547_dev->client->irq);
 	atomic_set(&pn547_dev->irq_enabled, 0);
 
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-	ret = request_irq(pn547_dev->clk_req_irq, pn547_dev_clk_req_irq_handler,
-		IRQF_SHARED | IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING
-			, "pn547_clk_req", pn547_dev);
-	if (ret) {
-		dev_err(&client->dev, "request_irq(clk_req) failed\n");
-		goto err_request_irq_failed;
-	}
-
-	enable_irq_wake(pn547_dev->clk_req_irq);
-#endif
+	device_init_wakeup(&client->dev, true);
+	device_set_wakeup_capable(&client->dev, true);
 
 	gpio_set_value(pn547_dev->ven_gpio, 1);
 	usleep_range(10000, 11000);
@@ -703,24 +615,14 @@ static int pn547_probe(struct i2c_client *client,
 	return 0;
 
 err_request_irq_failed:
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-err_create_workqueue:
-#endif
 	misc_deregister(&pn547_dev->pn547_device);
-	wakeup_source_trash(&pn547_dev->nfc_wake_lock);
 err_misc_register:
 	mutex_destroy(&pn547_dev->read_mutex);
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
-	msm_xo_put(pn547_dev->nfc_clock);
-err_get_clock:
-#endif
 	kfree(pn547_dev);
 err_exit:
 	gpio_free(platform_data->pvdd_en_gpio);
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	gpio_free(platform_data->clk_req_gpio);
 err_clk_req:
-#endif
 	gpio_free(platform_data->firm_gpio);
 err_firm:
 	gpio_free(platform_data->ven_gpio);
@@ -740,7 +642,6 @@ static int pn547_remove(struct i2c_client *client)
 	if (pn547_dev->nfc_clk)
 		clk_unprepare(pn547_dev->nfc_clk);
 #endif
-	wakeup_source_trash(&pn547_dev->nfc_wake_lock);
 	free_irq(client->irq, pn547_dev);
 	if (nfc_has_pinctrl) {
 		ret = pn547_pinctrl_config(pn547_dev, 0);
@@ -753,10 +654,7 @@ static int pn547_remove(struct i2c_client *client)
 	gpio_free(pn547_dev->irq_gpio);
 	gpio_free(pn547_dev->ven_gpio);
 	gpio_free(pn547_dev->firm_gpio);
-#ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	gpio_free(pn547_dev->clk_req_gpio);
-	msm_xo_put(pn547_dev->nfc_clock);
-#endif
 	gpio_free(pn547_dev->pvdd_en_gpio);
 	kfree(pn547_dev);
 

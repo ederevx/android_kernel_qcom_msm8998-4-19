@@ -675,7 +675,8 @@ static int fpc1020_probe(struct platform_device *pdev)
 	//disable_irq_wake( gpio_to_irq( fpc1020->irq_gpio ) );
 
 	enable_irq_wake( gpio_to_irq( fpc1020->irq_gpio ) );
-	wakeup_source_init(&fpc1020->ttw_wl, "fpc_ttw_wl");
+	fpc1020->ttw_wl.name = "fpc_ttw_wl";
+	wakeup_source_add(&fpc1020->ttw_wl);
 	device_init_wakeup(fpc1020->dev, 1);
 
 	rc = sysfs_create_group(&dev->kobj, &attribute_group);

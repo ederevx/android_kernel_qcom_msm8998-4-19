@@ -57,53 +57,92 @@ err:
 
 int gf_parse_dts(struct gf_dev* gf_dev)
 {
-	int rc = 0;
+	struct device *dev = &gf_dev->spi->dev;
+	bool is_dumpling;
+	int rc;
+
+	is_dumpling = of_property_read_bool(dev->of_node, "oem,dumpling");
+	gf_dev->project_version = is_dumpling ? 0x02 : 0x01;
 
 	/*get reset resource*/
 	gf_dev->reset_gpio =
-		of_get_named_gpio(gf_dev->spi->dev.of_node, "fp-gpio-reset", 0);
+		of_get_named_gpio(dev->of_node, "fp-gpio-reset", 0);
 	if (!gpio_is_valid(gf_dev->reset_gpio)) {
-		pr_info("RESET GPIO is invalid.\n");
-		rc = -1;
+		rc = gf_dev->reset_gpio;
+		if (rc >= 0)
+			rc = -EINVAL;
+		dev_err(dev, "RESET GPIO is invalid: %d\n", rc);
 		return rc;
 	}
 
 	rc = gpio_request(gf_dev->reset_gpio, "goodix_reset");
 	if (rc) {
-		dev_err(&gf_dev->spi->dev, "Failed RESET GPIO. rc = %d\n", rc);
+		dev_err(dev, "Failed RESET GPIO. rc = %d\n", rc);
+		gf_dev->reset_gpio = -EINVAL;
 		return rc;
 	}
 
-	gpio_direction_output(gf_dev->reset_gpio, 1);
+	rc = gpio_direction_output(gf_dev->reset_gpio, 1);
+	if (rc) {
+		dev_err(dev, "Failed to configure RESET GPIO. rc = %d\n", rc);
+		goto err_reset;
+	}
 
 	/*get irq resourece*/
 	gf_dev->irq_gpio =
-		of_get_named_gpio(gf_dev->spi->dev.of_node, "fp-gpio-irq", 0);
+		of_get_named_gpio(dev->of_node, "fp-gpio-irq", 0);
 	pr_info("gf::irq_gpio:%d\n", gf_dev->irq_gpio);
 	if (!gpio_is_valid(gf_dev->irq_gpio)) {
-		pr_info("IRQ GPIO is invalid.\n");
-		rc = -1;
-		return rc;
+		rc = gf_dev->irq_gpio;
+		if (rc >= 0)
+			rc = -EINVAL;
+		dev_err(dev, "IRQ GPIO is invalid: %d\n", rc);
+		goto err_reset;
 	}
 
 	rc = gpio_request(gf_dev->irq_gpio, "goodix_irq");
 	if (rc) {
-		dev_err(&gf_dev->spi->dev, "Failed IRQ GPIO. rc = %d\n", rc);
-		rc = -1;
-		return rc;
+		dev_err(dev, "Failed IRQ GPIO. rc = %d\n", rc);
+		gf_dev->irq_gpio = -EINVAL;
+		goto err_reset;
 	}
-	gpio_direction_input(gf_dev->irq_gpio);
-	if (of_property_read_bool(gf_dev->spi->dev.of_node, "oem,dumpling")) {
-		gf_dev->project_version = 0x02;
-		rc = devm_gpio_request(&gf_dev->spi->dev,
-			gf_dev->enable_gpio, "goodix_en");
-		if (rc) {
-			pr_err("failed to request enable gpio, rc = %d\n", rc);
 
+	rc = gpio_direction_input(gf_dev->irq_gpio);
+	if (rc) {
+		dev_err(dev, "Failed to configure IRQ GPIO. rc = %d\n", rc);
+		goto err_irq;
+	}
+
+	if (is_dumpling) {
+		gf_dev->enable_gpio =
+			of_get_named_gpio(dev->of_node, "fp-gpio-enable", 0);
+		if (!gpio_is_valid(gf_dev->enable_gpio)) {
+			rc = gf_dev->enable_gpio;
+			if (rc >= 0)
+				rc = -EINVAL;
+			dev_err(dev, "ENABLE GPIO is invalid: %d\n", rc);
+			gf_dev->enable_gpio = -EINVAL;
+			goto err_irq;
+		}
+
+		rc = devm_gpio_request(dev, gf_dev->enable_gpio, "goodix_en");
+		if (rc) {
+			dev_err(dev,
+				"failed to request enable gpio, rc = %d\n",
+				rc);
+			gf_dev->enable_gpio = -EINVAL;
+			goto err_irq;
 		}
 	}
-	else
-		gf_dev->project_version = 0x01;
+
+	return 0;
+
+err_irq:
+	gpio_free(gf_dev->irq_gpio);
+	gf_dev->irq_gpio = -EINVAL;
+err_reset:
+	gpio_free(gf_dev->reset_gpio);
+	gf_dev->reset_gpio = -EINVAL;
 	return rc;
 }
 
@@ -113,11 +152,13 @@ void gf_cleanup(struct gf_dev	*gf_dev)
 	if (gpio_is_valid(gf_dev->irq_gpio))
 	{
 		gpio_free(gf_dev->irq_gpio);
+		gf_dev->irq_gpio = -EINVAL;
 		pr_info("remove irq_gpio success\n");
 	}
 	if (gpio_is_valid(gf_dev->reset_gpio))
 	{
 		gpio_free(gf_dev->reset_gpio);
+		gf_dev->reset_gpio = -EINVAL;
 		pr_info("remove reset_gpio success\n");
 	}
 }
@@ -163,4 +204,3 @@ int gf_irq_num(struct gf_dev *gf_dev)
 		return gpio_to_irq(gf_dev->irq_gpio);
 	}
 }
-

@@ -741,6 +741,8 @@
 
 	sound-9335 {
 		status = "disabled";
+		compatible = "oneplus,msm8998-asoc-snd-tasha",
+			     "qcom,msm8998-asoc-snd-tasha";
 		/delete-property/ qcom,us-euro-gpios;
 		qcom,msm-mbhc-hphl-swh = <1>;
 		qcom,msm-mbhc-gnd-swh = <1>;

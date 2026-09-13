@@ -1705,14 +1705,13 @@ static void synaptics_ts_work_func(struct work_struct *work)
 END:
 	//ret = set_changer_bit(ts);
 	touch_enable(ts);
-	return;
 }
 
 #ifndef TPD_USE_EINT
 static enum hrtimer_restart synaptics_ts_timer_func(struct hrtimer *timer)
 {
 	struct synaptics_ts_data *ts =
-	container_of(timer, struct synaptics_ts_data, timer);
+	    container_of(timer, struct synaptics_ts_data, timer);
 
 	mutex_lock(&ts->mutex);
 	synaptics_ts_work_func(ts);

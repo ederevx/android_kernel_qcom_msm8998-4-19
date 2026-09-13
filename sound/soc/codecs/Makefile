@@ -175,6 +175,15 @@ snd-soc-tas5720-objs := tas5720.o
 snd-soc-tas6424-objs := tas6424.o
 snd-soc-tda7419-objs := tda7419.o
 snd-soc-tfa9879-objs := tfa9879.o
+snd-soc-tfa98xx-objs += tfa/tfa98xx.o
+snd-soc-tfa98xx-objs += tfa/tfa_container.o
+snd-soc-tfa98xx-objs += tfa/tfa_dsp.o
+snd-soc-tfa98xx-objs += tfa/tfa9888_init.o
+snd-soc-tfa98xx-objs += tfa/tfa9891_init.o
+snd-soc-tfa98xx-objs += tfa/tfa9897_init.o
+snd-soc-tfa98xx-objs += tfa/tfa9890_init.o
+snd-soc-tfa98xx-objs += tfa/tfa9887B_init.o
+snd-soc-tfa98xx-objs += tfa/tfa9887_init.o
 snd-soc-tlv320aic23-objs := tlv320aic23.o
 snd-soc-tlv320aic23-i2c-objs := tlv320aic23-i2c.o
 snd-soc-tlv320aic23-spi-objs := tlv320aic23-spi.o
@@ -434,6 +443,13 @@ obj-$(CONFIG_SND_SOC_TAS5720)	+= snd-soc-tas5720.o
 obj-$(CONFIG_SND_SOC_TAS6424)	+= snd-soc-tas6424.o
 obj-$(CONFIG_SND_SOC_TDA7419)	+= snd-soc-tda7419.o
 obj-$(CONFIG_SND_SOC_TFA9879)	+= snd-soc-tfa9879.o
+# techpack/audio/asoc/codecs/tfa98xx/ ports the same NXP driver under the
+# same CONFIG_SND_SOC_TFA98XX symbol; $(TECHPACK) (techpack/Kbuild) already
+# decides whether that overlay is built, so mirror it here to avoid a
+# duplicate-symbol link when both copies would otherwise be builtin.
+ifneq ($(TECHPACK),y)
+obj-$(CONFIG_SND_SOC_TFA98XX) += snd-soc-tfa98xx.o
+endif
 obj-$(CONFIG_SND_SOC_TLV320AIC23)	+= snd-soc-tlv320aic23.o
 obj-$(CONFIG_SND_SOC_TLV320AIC23_I2C)	+= snd-soc-tlv320aic23-i2c.o
 obj-$(CONFIG_SND_SOC_TLV320AIC23_SPI)	+= snd-soc-tlv320aic23-spi.o

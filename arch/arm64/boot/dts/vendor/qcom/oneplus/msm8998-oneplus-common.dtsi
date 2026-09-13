@@ -595,10 +595,13 @@
 
 /* Display */
 &i2c_5 {
+	status = "okay";
+	qcom,disable-dma;
+
 	/delete-node/ synaptics@20;
 
 	synaptics-rmi-ts@20 {
-		status = "disabled";
+		status = "okay";
 		compatible = "synaptics,s3320";
 		reg = <0x20>;
 		interrupt-parent = <&tlmm>;

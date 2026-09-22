@@ -2157,3 +2157,7 @@
 	pinctrl-0 = <&uart_console_active>;
 	pinctrl-1 = <&uart_console_deactive>;
 };
+
+&{/usb_audio_qmi_dev} {
+	qcom,iommu-faults = "non-fatal";
+};

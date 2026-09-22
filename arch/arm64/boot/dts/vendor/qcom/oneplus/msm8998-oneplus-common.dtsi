@@ -2158,6 +2158,12 @@
 	pinctrl-1 = <&uart_console_deactive>;
 };
 
-&{/usb_audio_qmi_dev} {
+/*
+ * Diagnostic (2026-09-22 OTG teardown-race soak): mark the uaudio default
+ * domain non-fatal so a LPASS Q6 SMMU context fault logs and resumes
+ * instead of BUG()-ing into 900E, letting the event-ring unmap dump_stack
+ * trace be recovered from the printk ring.
+ */
+&usb_audio_qmi_dev {
 	qcom,iommu-faults = "non-fatal";
 };

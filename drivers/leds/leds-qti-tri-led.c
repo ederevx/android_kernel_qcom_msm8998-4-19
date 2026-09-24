@@ -17,6 +17,8 @@
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/regmap.h>
+#include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/types.h>
 
 #define TRILED_REG_TYPE			0x04
@@ -33,6 +35,7 @@
 #define TRILED_SUBTYPE_LED1H2L12	0x04
 
 #define TRILED_NUM_MAX			3
+#define TRILED_PATTERN_MAX		16
 
 #define PWM_PERIOD_DEFAULT_NS		1000000
 
@@ -62,6 +65,14 @@ struct qpnp_led_dev {
 	u8			id;
 	bool			blinking;
 	bool			breathing;
+
+	/* QCOM LPG pattern interface (TIMED_QCOM) */
+	u32			pattern_start_idx;
+	u32			pattern_duty_pcts[TRILED_PATTERN_MAX];
+	u32			pattern_num_duty_pcts;
+	u32			pattern_pause_lo;
+	u32			pattern_pause_hi;
+	u32			pattern_ramp_step_ms;
 };
 
 struct qpnp_tri_led_chip {
@@ -405,6 +416,146 @@ static const struct attribute *breath_attrs[] = {
 	NULL
 };
 
+/*
+ * QCOM LPG pattern interface.  The Lineage light HAL uses these nodes for
+ * LIGHT_FLASH_TIMED when they all exist, in preference to the generic
+ * timer trigger whose delay_on/delay_off attributes are created with
+ * root-only permissions.  start_idx is accepted for compatibility; each LPG
+ * channel owns its own LUT here, so the pattern always starts at index 0.
+ */
+#define PATTERN_U32_ATTR(_name, _field) \
+static ssize_t _name##_show(struct device *dev, \
+		struct device_attribute *attr, char *buf) \
+{ \
+	struct led_classdev *led_cdev = dev_get_drvdata(dev); \
+	struct qpnp_led_dev *led = \
+		container_of(led_cdev, struct qpnp_led_dev, cdev); \
+\
+	return scnprintf(buf, PAGE_SIZE, "%u\n", led->_field); \
+} \
+static ssize_t _name##_store(struct device *dev, \
+		struct device_attribute *attr, const char *buf, size_t count) \
+{ \
+	struct led_classdev *led_cdev = dev_get_drvdata(dev); \
+	struct qpnp_led_dev *led = \
+		container_of(led_cdev, struct qpnp_led_dev, cdev); \
+	u32 val; \
+\
+	if (kstrtou32(buf, 10, &val)) \
+		return -EINVAL; \
+	led->_field = val; \
+\
+	return count; \
+} \
+static DEVICE_ATTR_RW(_name)
+
+PATTERN_U32_ATTR(start_idx, pattern_start_idx);
+PATTERN_U32_ATTR(pause_lo, pattern_pause_lo);
+PATTERN_U32_ATTR(pause_hi, pattern_pause_hi);
+PATTERN_U32_ATTR(ramp_step_ms, pattern_ramp_step_ms);
+
+static ssize_t duty_pcts_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led =
+		container_of(led_cdev, struct qpnp_led_dev, cdev);
+	int i, len = 0;
+
+	for (i = 0; i < led->pattern_num_duty_pcts; i++)
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%s%u",
+				i ? "," : "", led->pattern_duty_pcts[i]);
+	len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
+
+	return len;
+}
+
+static ssize_t duty_pcts_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led =
+		container_of(led_cdev, struct qpnp_led_dev, cdev);
+	char *input, *orig, *token;
+	u32 val, n = 0;
+
+	orig = input = kstrdup(buf, GFP_KERNEL);
+	if (!input)
+		return -ENOMEM;
+
+	for (token = strsep(&input, ","); token && n < TRILED_PATTERN_MAX;
+			token = strsep(&input, ",")) {
+		token = strim(token);
+		if (!*token)
+			continue;
+		if (kstrtou32(token, 10, &val))
+			continue;
+		led->pattern_duty_pcts[n++] = val;
+	}
+	led->pattern_num_duty_pcts = n;
+
+	kfree(orig);
+
+	return count;
+}
+static DEVICE_ATTR_RW(duty_pcts);
+
+static ssize_t blink_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led =
+		container_of(led_cdev, struct qpnp_led_dev, cdev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", led->blinking ? 1 : 0);
+}
+
+static ssize_t blink_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct qpnp_led_dev *led =
+		container_of(led_cdev, struct qpnp_led_dev, cdev);
+	unsigned long on_ms = 0, off_ms = 0;
+	u32 blink, num, step;
+	int rc;
+
+	if (kstrtou32(buf, 10, &blink))
+		return -EINVAL;
+
+	if (blink) {
+		num = led->pattern_num_duty_pcts ?
+				led->pattern_num_duty_pcts : 8;
+		step = led->pattern_ramp_step_ms ?
+				led->pattern_ramp_step_ms : 50;
+		/* One ramp up + down plus the pause at the top. */
+		on_ms = (unsigned long)2 * num * step +
+				(unsigned long)2 * led->pattern_pause_hi;
+		if (!on_ms)
+			on_ms = 500;
+		/* The pause at the bottom is the time the light is off. */
+		off_ms = led->pattern_pause_lo ?
+				led->pattern_pause_lo : 2000;
+	}
+
+	rc = qpnp_tri_led_set_blink(led_cdev, &on_ms, &off_ms);
+	if (rc)
+		return rc;
+
+	return count;
+}
+static DEVICE_ATTR_RW(blink);
+
+static const struct attribute *pattern_attrs[] = {
+	&dev_attr_start_idx.attr,
+	&dev_attr_duty_pcts.attr,
+	&dev_attr_pause_lo.attr,
+	&dev_attr_pause_hi.attr,
+	&dev_attr_ramp_step_ms.attr,
+	&dev_attr_blink.attr,
+	NULL
+};
+
 static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 {
 	struct qpnp_led_dev *led;
@@ -438,15 +589,26 @@ static int qpnp_tri_led_register(struct qpnp_tri_led_chip *chip)
 				goto err_out;
 			}
 		}
+
+		rc = sysfs_create_files(&led->cdev.dev->kobj,
+				pattern_attrs);
+		if (rc < 0) {
+			dev_err(chip->dev, "Create pattern files for %s led failed, rc=%d\n",
+					led->label, rc);
+			goto err_out;
+		}
 	}
 
 	return 0;
 
 err_out:
 	for (j = 0; j <= i; j++) {
-		if (j < i)
+		if (j < i) {
 			sysfs_remove_files(&chip->leds[j].cdev.dev->kobj,
 					breath_attrs);
+			sysfs_remove_files(&chip->leds[j].cdev.dev->kobj,
+					pattern_attrs);
+		}
 		mutex_destroy(&chip->leds[j].lock);
 	}
 	return rc;
@@ -626,6 +788,7 @@ static int qpnp_tri_led_remove(struct platform_device *pdev)
 	mutex_destroy(&chip->bus_lock);
 	for (i = 0; i < chip->num_leds; i++) {
 		sysfs_remove_files(&chip->leds[i].cdev.dev->kobj, breath_attrs);
+		sysfs_remove_files(&chip->leds[i].cdev.dev->kobj, pattern_attrs);
 		mutex_destroy(&chip->leds[i].lock);
 	}
 	dev_set_drvdata(chip->dev, NULL);

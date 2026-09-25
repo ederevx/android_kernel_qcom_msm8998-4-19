@@ -315,6 +315,15 @@ static int qpnp_tri_led_set_blink(struct led_classdev *led_cdev,
 		container_of(led_cdev, struct qpnp_led_dev, cdev);
 	int rc = 0;
 
+	/*
+	 * The LED core defers brightness writes to brightness_set_blocking
+	 * through set_brightness_work.  The light HAL zeroes brightness before
+	 * it enables a blink, so that stale zero can still be pending and would
+	 * otherwise run after this blink and clear it.  A blink request is the
+	 * newest state, so drop any pending brightness change first.
+	 */
+	cancel_work_sync(&led_cdev->set_brightness_work);
+
 	mutex_lock(&led->lock);
 	if (led->blinking && *on_ms == led->led_setting.on_ms &&
 			*off_ms == led->led_setting.off_ms) {

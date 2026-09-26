@@ -182,86 +182,7 @@ static int fpc1020_pinctrl_select(struct fpc1020_data *fpc1020, bool on)
 	return ret;
 }
 #endif
-/*
-static int hw_reset(struct  fpc1020_data *fpc1020)
-{
-	int irq_gpio;
-	struct device *dev = fpc1020->dev;
 
-	int rc = select_pin_ctl(fpc1020, "fpc1020_reset_active");
-	if (rc)
-		goto exit;
-	usleep_range(FPC1020_RESET_HIGH1_US, FPC1020_RESET_HIGH1_US + 100);
-
-	rc = select_pin_ctl(fpc1020, "fpc1020_reset_reset");
-	if (rc)
-		goto exit;
-	usleep_range(FPC1020_RESET_LOW_US, FPC1020_RESET_LOW_US + 100);
-
-	rc = select_pin_ctl(fpc1020, "fpc1020_reset_active");
-	if (rc)
-		goto exit;
-	usleep_range(FPC1020_RESET_HIGH1_US, FPC1020_RESET_HIGH1_US + 100);
-
-	irq_gpio = gpio_get_value(fpc1020->irq_gpio);
-	dev_info(dev, "IRQ after reset %d\n", irq_gpio);
-exit:
-	return rc;
-}
-
-static int hw_reset(struct  fpc1020_data *fpc1020)
-{
-    int irq_gpio;
-	struct device *dev = fpc1020->dev;
-	int counter = 2;
-
-	gpio_set_value(fpc1020->EN_VDD_gpio, 0);
-    mdelay(3);
-	gpio_set_value(fpc1020->EN_VDD_gpio, 1);
-	mdelay(3);
-	//gpio_direction_output(fpc1020->EN_VDD_gpio,1);
-
-	while (counter) {
-		counter--;
-
-		gpio_set_value(fpc1020->rst_gpio, 1);
-		udelay(FPC1020_RESET_HIGH1_US);
-
-		gpio_set_value(fpc1020->rst_gpio, 0);
-		udelay(FPC1020_RESET_LOW_US);
-
-		gpio_set_value(fpc1020->rst_gpio, 1);
-		udelay(FPC1020_RESET_HIGH2_US);
-
-		irq_gpio = gpio_get_value(fpc1020->irq_gpio);
-		dev_err(dev, "IRQ after reset %d\n", irq_gpio);
-		if (irq_gpio) {
-			//printk(KERN_INFO "%s OK !\n", __func__);
-			counter = 0;
-		} else {
-			dev_err(dev, "%s timed out,retrying ...\n",
-				__func__);
-
-			udelay(1250);
-		}
-	}
-	return 0;
-}
-static ssize_t hw_reset_set(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	int rc;
-	struct  fpc1020_data *fpc1020 = dev_get_drvdata(dev);
-
-	if (!strncmp(buf, "reset", strlen("reset")))
-		rc = hw_reset(fpc1020);
-	else
-		return -EINVAL;
-	return rc ? rc : count;
-}
-static DEVICE_ATTR(hw_reset, S_IWUSR, NULL, hw_reset_set);
-
-*/
 /**
  * sysf node to check the interrupt status of the sensor, the interrupt
  * handler should perform sysf_notify to allow userland to poll the node.
@@ -684,25 +605,7 @@ static int fpc1020_probe(struct platform_device *pdev)
 		dev_err(dev, "could not create sysfs\n");
 		goto exit;
 	}
-	
-    #if 0 //changhua remove HW reset here,move to HAL,after spi cs pin become high
-	rc = gpio_direction_output(fpc1020->rst_gpio, 1);
 
-	if (rc) {
-		dev_err(fpc1020->dev,
-			"gpio_direction_output (reset) failed.\n");
-		goto exit;
-	}
-
-	gpio_set_value(fpc1020->rst_gpio, 1);
-	udelay(FPC1020_RESET_HIGH1_US);
-	
-	gpio_set_value(fpc1020->rst_gpio, 0);
-	udelay(FPC1020_RESET_LOW_US);
-	
-	gpio_set_value(fpc1020->rst_gpio, 1);
-	udelay(FPC1020_RESET_HIGH2_US);
-    #endif
     /**
     *           ID0(GPIO39)   ID1(GPIO41)   ID1(GPIO63)
     *   fpc1245

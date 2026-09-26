@@ -3305,13 +3305,6 @@ const char *buffer, size_t count, loff_t *ppos)
 	return count;
 }
 
-static const struct file_operations base_register_address = {
-	.write = synap_write_address,
-	.read =  synap_read_address,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-};
-
 static const struct file_operations radd_proc_fops = {
 	.write = synap_write_address,
 	.read =  synap_read_address,
@@ -3326,12 +3319,6 @@ static const struct file_operations baseline_test_proc_fops = {
 };
 
 static const struct file_operations i2c_device_test_proc_fops = {
-	.read =  i2c_device_test_read_func,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-};
-
-static const struct file_operations i2c_device_test_fops = {
 	.read =  i2c_device_test_read_func,
 	.open = simple_open,
 	.owner = THIS_MODULE,
@@ -3424,13 +3411,6 @@ const char __user *buffer, size_t count, loff_t *ppos)
 
 	return count;
 }
-static const struct file_operations changer_ops = {
-	.write = changer_write_func,
-	.read =  changer_read_func,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-};
-
 static void set_doze_time(int doze_time)
 {
 	static int pre_doze_time;

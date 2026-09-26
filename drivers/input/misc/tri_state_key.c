@@ -32,9 +32,6 @@
 #define DRV_NAME "tri-state-key"
 #define OPLUS_TRI_KEY "oplus,tri-state-key"
 
-#define KEYCODE_BASE 600
-#define TOTAL_KEYCODES 6
-
 /*
  * Switch/input dev values by OP
  */

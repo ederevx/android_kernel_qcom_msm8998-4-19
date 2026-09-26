@@ -48,6 +48,7 @@
 #define CRC_SID_FSM_OFFSET			0x10a0
 #define CRC_MND_CFG_OFFSET			0x10a4
 #define GPU_GX_BCR_OFFSET				0x1090
+#define GPU_GX_BCR_BLK_ARES_MASK			BIT(0)
 
 #define F(f, s, h, m, n) { (f), (s), (2 * (h) - 1), (m), (n) }
 #define F_GFX(f, s, h, m, n, sf) { (f), (s), (2 * (h) - 1), (m), (n), (sf) }
@@ -353,6 +354,24 @@ static struct clk_branch gpucc_rbcpr_clk = {
 	},
 };
 
+/*
+ * One-time CRC training pass, run before any gdsc/regulator or kgsl
+ * consumer exists.
+ *
+ * GPUCC binds at arch_initcall, while the gdsc-regulator driver that owns
+ * the GPU_CX/GPU_GX domains binds at subsys_initcall and gdsc_gpu_gx
+ * itself consumes GFX3D_CLK_SRC from this driver. Taking a supply here
+ * would therefore form a probe cycle that deferred probing cannot resolve:
+ * on -EPROBE_DEFER devres_release_all() runs before the device is queued
+ * for reprobe, so the clocks registered below would be dropped and neither
+ * driver could ever bind.
+ *
+ * The raw register accesses are consequently deliberate: they are
+ * unrefcounted, run once before gdsc or kgsl can hold these domains, touch
+ * only the documented bit of each register, and return both domains
+ * collapsed with the graphics rail off, which is the state gdsc and kgsl
+ * expect at boot.
+ */
 static void enable_gfx_crc(struct regmap *regmap)
 {
 	/* Turn on the GPU_CX GDSC */
@@ -366,14 +385,16 @@ static void enable_gfx_crc(struct regmap *regmap)
 	if (regulator_enable(vdd_gpucc.regulator[0]))
 		pr_warn("Failed to enable VDD_GPUCC during CRC sequence!\n");
 	/* Turn on the GPU_GX GDSC */
-	regmap_write(regmap, GPU_GX_BCR_OFFSET, 0x1);
+	regmap_update_bits(regmap, GPU_GX_BCR_OFFSET, GPU_GX_BCR_BLK_ARES_MASK,
+			   GPU_GX_BCR_BLK_ARES_MASK);
 
 	/*
 	 * BLK_ARES should be kept asserted for 1us before being de-asserted.
 	 */
 	wmb();
 	udelay(1);
-	regmap_write(regmap, GPU_GX_BCR_OFFSET, 0x0);
+	regmap_update_bits(regmap, GPU_GX_BCR_OFFSET, GPU_GX_BCR_BLK_ARES_MASK,
+			   0);
 	regmap_update_bits(regmap, 0x130, BIT(4), BIT(4));
 
 	/* Keep reset asserted for at-least 1us before continuing. */

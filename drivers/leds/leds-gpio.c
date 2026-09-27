@@ -19,6 +19,7 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
 struct gpio_led_data {
@@ -27,6 +28,9 @@ struct gpio_led_data {
 	u8 can_sleep;
 	u8 blinking;
 	gpio_blink_set_t platform_gpio_blink_set;
+	struct regulator *vdd;
+	int vmin_high;
+	int vmin_low;
 };
 
 static inline struct gpio_led_data *
@@ -45,6 +49,11 @@ static void gpio_led_set(struct led_classdev *led_cdev,
 		level = 0;
 	else
 		level = 1;
+
+	if (!IS_ERR_OR_NULL(led_dat->vdd))
+		regulator_set_voltage(led_dat->vdd,
+				level ? led_dat->vmin_high : led_dat->vmin_low,
+				INT_MAX);
 
 	if (led_dat->blinking) {
 		led_dat->platform_gpio_blink_set(led_dat->gpiod, level,
@@ -80,6 +89,7 @@ static int create_gpio_led(const struct gpio_led *template,
 	struct device_node *np, gpio_blink_set_t blink_set)
 {
 	int ret, state;
+	const __be32 *min_uV, *max_uV;
 
 	led_dat->gpiod = template->gpiod;
 	if (!led_dat->gpiod) {
@@ -118,6 +128,19 @@ static int create_gpio_led(const struct gpio_led *template,
 	else
 		led_dat->cdev.brightness_set_blocking = gpio_led_set_blocking;
 	led_dat->blinking = 0;
+
+	led_dat->vdd = regulator_get(parent, "vdd");
+	min_uV = of_get_property(parent->of_node, "keypad-led-vbob-min", NULL);
+	max_uV = of_get_property(parent->of_node, "keypad-led-vbob-max", NULL);
+	if (!IS_ERR_OR_NULL(led_dat->vdd) && min_uV && max_uV) {
+		led_dat->vmin_low = be32_to_cpu(*min_uV);
+		led_dat->vmin_high = be32_to_cpu(*max_uV);
+	} else {
+		if (!IS_ERR_OR_NULL(led_dat->vdd))
+			regulator_put(led_dat->vdd);
+		led_dat->vdd = NULL;
+	}
+
 	if (blink_set) {
 		led_dat->platform_gpio_blink_set = blink_set;
 		led_dat->cdev.blink_set = gpio_blink_set;

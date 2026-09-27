@@ -23,6 +23,7 @@
 #include <linux/device.h>
 #include <linux/fb.h>
 #include <linux/kernel.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 
@@ -118,7 +119,7 @@ static inline int flicker_free_push(struct msm_fb_data_type *mfd, int bl_lvl,
 
 	/* Push values consecutively */
 	return mdss_mdp_dither_config(mfd, &dither_config, &dither_copyback, 1) ||
-				mdss_mdp_pcc_config(mfd, &pcc_config, &copyback);
+				mdss_mdp_kernel_pcc_config(mfd, &pcc_config, &copyback);
 }
 
 uint32_t mdss_panel_calc_backlight(uint32_t bl_lvl)
@@ -126,7 +127,7 @@ uint32_t mdss_panel_calc_backlight(uint32_t bl_lvl)
 	struct msm_fb_data_type *mfd = ff_mfd;
 	bool target_pcc_en = mdss_backlight_enable;
 
-	if (!mfd)
+	if (!mfd || !bl_lvl)
 		return bl_lvl;
 
 	/* We don't need flicker free above elvss */
@@ -172,6 +173,9 @@ static ssize_t flicker_free_set_dc(struct device *dev,
 	if (kstrtoint(buf, 0, &value))
 		return -EINVAL;
 
+	if (!payload || !dither_payload)
+		return -ENODEV;
+
 	if (!mfd)
 		return count;
 
@@ -211,9 +215,22 @@ void mdss_fb_update_flicker_free_mfd(struct msm_fb_data_type *mfd)
 	ff_mfd = mfd;
 }
 
-void mdss_panel_set_elvss_off_threshold(int val)
+static void mdss_panel_set_elvss_off_threshold(int val)
 {
 	elvss_off_threshold = val;
+}
+
+/*
+ * Flicker free only applies below the panel's ELVSS threshold, and the
+ * panels this driver supports do not share one value.
+ */
+void mdss_panel_parse_elvss_off_thresh(struct device_node *np)
+{
+	u32 thresh;
+
+	if (!of_property_read_u32(np, "qcom,mdss-dsi-panel-elvss-off-thresh",
+					&thresh))
+		mdss_panel_set_elvss_off_threshold(thresh);
 }
 
 static int __init mdss_fb_flicker_free_init(void)

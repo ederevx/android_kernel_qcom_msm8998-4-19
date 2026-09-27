@@ -22,6 +22,10 @@
 #include "mdss_debug.h"
 #include "mdss_livedisplay.h"
 
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+#include "flicker_free.h"
+#endif
+
 #define DT_CMD_HDR 6
 #define DEFAULT_MDP_TRANSFER_TIME 14000
 
@@ -973,6 +977,11 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
+
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	/* Remap the backlight value prior to HBM */
+	bl_level = mdss_panel_calc_backlight(bl_level);
+#endif
 
 #ifdef CONFIG_ARCH_ONEPLUS_MSM8998
 	if (ctrl_pdata->high_brightness_panel && ctrl_pdata->bklt_max == 255) {
@@ -2602,6 +2611,11 @@ int mdss_panel_parse_bl_settings(struct device_node *np,
 								__func__);
 		}
 	}
+
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	mdss_panel_parse_elvss_off_thresh(np);
+#endif
+
 	return 0;
 }
 

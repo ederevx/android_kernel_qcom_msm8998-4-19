@@ -128,6 +128,10 @@ struct mdss_pp_res_type_v1_7 {
 	struct mdp_hist_lut_data_v1_7 hist_lut_v17_data[MDSS_BLOCK_DISP_NUM];
 	struct mdp_dither_data_v1_7 dither_v17_data[MDSS_BLOCK_DISP_NUM];
 	struct mdp_gamut_data_v1_7 gamut_v17_data[MDSS_BLOCK_DISP_NUM];
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	struct mdp_pcc_data_v1_7 kernel_pcc_v17_data[MDSS_BLOCK_DISP_NUM];
+	struct mdp_pcc_data_v1_7 user_pcc_v17_data[MDSS_BLOCK_DISP_NUM];
+#endif
 	struct mdp_pcc_data_v1_7 pcc_v17_data[MDSS_BLOCK_DISP_NUM];
 	struct mdp_pa_data_v1_7 pa_v17_data[MDSS_BLOCK_DISP_NUM];
 	struct mdp_pa_dither_res_data_v1_7 pa_dither_data[MDSS_BLOCK_DISP_NUM];
@@ -166,6 +170,10 @@ struct mdss_pp_res_type {
 	struct mdp_pa_v2_cfg_data pa_v2_disp_cfg[MDSS_BLOCK_DISP_NUM];
 	u32 six_zone_lut_curve_p0[MDSS_BLOCK_DISP_NUM][MDP_SIX_ZONE_LUT_SIZE];
 	u32 six_zone_lut_curve_p1[MDSS_BLOCK_DISP_NUM][MDP_SIX_ZONE_LUT_SIZE];
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	struct mdp_pcc_cfg_data kernel_pcc_disp_cfg[MDSS_BLOCK_DISP_NUM];
+	struct mdp_pcc_cfg_data user_pcc_disp_cfg[MDSS_BLOCK_DISP_NUM];
+#endif
 	struct mdp_pcc_cfg_data pcc_disp_cfg[MDSS_BLOCK_DISP_NUM];
 	struct mdp_igc_lut_data igc_disp_cfg[MDSS_BLOCK_DISP_NUM];
 	struct mdp_pgc_lut_data argc_disp_cfg[MDSS_BLOCK_DISP_NUM];

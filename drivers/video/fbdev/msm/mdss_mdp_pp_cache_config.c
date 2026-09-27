@@ -635,6 +635,51 @@ cleanup:
 	return 0;
 }
 
+/*
+ * With a kernel owner for PCC, the v1_7 cache keeps the userspace and the
+ * kernel configuration in separate buffers, so that either side can change
+ * without discarding the other. Without one, the userspace configuration is
+ * the configuration that gets programmed.
+ */
+static struct mdp_pcc_data_v1_7 *pp_pcc_cache_data_v1_7(
+		struct mdp_pcc_cfg_data *config,
+		struct mdss_pp_res_type *mdss_pp_res,
+		struct mdss_pp_res_type_v1_7 *res_cache, u32 disp_num)
+{
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	mdss_pp_res->user_pcc_disp_cfg[disp_num] = *config;
+	mdss_pp_res->kernel_pcc_disp_cfg[disp_num].cfg_payload =
+		(void *) &res_cache->kernel_pcc_v17_data[disp_num];
+	mdss_pp_res->user_pcc_disp_cfg[disp_num].cfg_payload =
+		(void *) &res_cache->user_pcc_v17_data[disp_num];
+	mdss_pp_res->pcc_disp_cfg[disp_num].cfg_payload =
+		(void *) &res_cache->pcc_v17_data[disp_num];
+
+	return &res_cache->user_pcc_v17_data[disp_num];
+#else
+	mdss_pp_res->pcc_disp_cfg[disp_num] = *config;
+	mdss_pp_res->pcc_disp_cfg[disp_num].cfg_payload =
+		(void *) &res_cache->pcc_v17_data[disp_num];
+
+	return &res_cache->pcc_v17_data[disp_num];
+#endif
+}
+
+static void pp_pcc_cache_combine_v1_7(struct mdss_pp_res_type *mdss_pp_res,
+		u32 disp_num)
+{
+#ifdef CONFIG_FB_MSM_MDSS_FLICKER_FREE
+	/*
+	 * A userspace update replaces the user configuration only, so combine
+	 * it with the kernel one to keep a kernel correction, such as the
+	 * flicker free dimming, applied across the update.
+	 */
+	pcc_combine(&mdss_pp_res->kernel_pcc_disp_cfg[disp_num],
+			&mdss_pp_res->user_pcc_disp_cfg[disp_num],
+			&mdss_pp_res->pcc_disp_cfg[disp_num]);
+#endif
+}
+
 static int pp_pcc_cache_params_v1_7(struct mdp_pcc_cfg_data *config,
 				      struct mdss_pp_res_type *mdss_pp_res)
 {
@@ -665,10 +710,8 @@ static int pp_pcc_cache_params_v1_7(struct mdp_pcc_cfg_data *config,
 		return -EINVAL;
 	}
 	disp_num = config->block - MDP_LOGICAL_BLOCK_DISP_0;
-	mdss_pp_res->pcc_disp_cfg[disp_num] = *config;
-	v17_cache_data = &res_cache->pcc_v17_data[disp_num];
-	mdss_pp_res->pcc_disp_cfg[disp_num].cfg_payload =
-		(void *) v17_cache_data;
+	v17_cache_data = pp_pcc_cache_data_v1_7(config, mdss_pp_res, res_cache,
+			disp_num);
 	if (copy_from_user(&v17_usr_config, config->cfg_payload,
 			   sizeof(v17_usr_config))) {
 		pr_err("failed to copy v17 pcc\n");
@@ -678,13 +721,14 @@ static int pp_pcc_cache_params_v1_7(struct mdp_pcc_cfg_data *config,
 	if ((config->ops & MDP_PP_OPS_DISABLE)) {
 		pr_debug("disable pcc\n");
 		ret = 0;
-		goto pcc_config_exit;
-	}
-	if (!(config->ops & MDP_PP_OPS_WRITE)) {
+	} else if (!(config->ops & MDP_PP_OPS_WRITE)) {
 		pr_debug("op for pcc %d\n", config->ops);
 		goto pcc_config_exit;
+	} else {
+		memcpy(v17_cache_data, &v17_usr_config, sizeof(v17_usr_config));
 	}
-	memcpy(v17_cache_data, &v17_usr_config, sizeof(v17_usr_config));
+
+	pp_pcc_cache_combine_v1_7(mdss_pp_res, disp_num);
 pcc_config_exit:
 	return ret;
 }

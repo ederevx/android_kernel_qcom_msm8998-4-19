@@ -23,14 +23,17 @@
 #ifndef _FLICKER_FREE_H
 #define _FLICKER_FREE_H
 
+struct device_node;
 struct msm_fb_data_type;
 
 /* Use this function to remap the physical backlight level */
 uint32_t mdss_panel_calc_backlight(uint32_t bl_lvl);
 
-/* Functions to set internal variables */
+/* Use this function to read the panel's ELVSS threshold from DT */
+void mdss_panel_parse_elvss_off_thresh(struct device_node *np);
+
+/* Use this function to track the framebuffer the display thread runs on */
 void mdss_fb_update_flicker_free_mfd(struct msm_fb_data_type *mfd);
-void mdss_panel_set_elvss_off_threshold(int val);
 
 /* Expose the flicker free state to the LiveDisplay HAL */
 int mdss_fb_create_flicker_free_sysfs(struct msm_fb_data_type *mfd);

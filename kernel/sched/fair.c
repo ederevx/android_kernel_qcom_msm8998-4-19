@@ -896,6 +896,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 		      max(delta_exec, curr->statistics.exec_max));
 
 	curr->sum_exec_runtime += delta_exec;
+	curr->delta_exec += delta_exec;
 	schedstat_add(cfs_rq->exec_clock, delta_exec);
 
 	curr->vruntime += calc_delta_fair(delta_exec, curr);
@@ -3779,6 +3780,11 @@ static inline unsigned long _task_util_est(struct task_struct *p)
 	return max(ue.ewma, ue.enqueued);
 }
 
+static inline unsigned long task_util_dequeued(struct task_struct *p)
+{
+	return READ_ONCE(p->util_avg_dequeued);
+}
+
 unsigned long task_util_est(struct task_struct *p)
 {
 #ifdef CONFIG_SCHED_WALT
@@ -3832,11 +3838,29 @@ static inline bool within_margin(int value, int margin)
 	return ((unsigned int)(value + margin - 1) < (2 * margin - 1));
 }
 
+/*
+ * The global default must not boost background work, so it only applies to a
+ * task running at a raised uclamp.min; every other task keeps the plain PELT
+ * rampup and its throughput and power are untouched. An explicit per-task
+ * setting is used as-is, and 0 and 1 keep their global meaning: 0 disables
+ * util_est for every task and 1 is the normal behavior.
+ */
+static unsigned int task_rampup_multiplier(struct task_struct *p)
+{
+#ifdef CONFIG_UCLAMP_TASK
+	if (!p->rampup_multiplier_set && p->rampup_multiplier > 1 &&
+	    !uclamp_eff_value(p, UCLAMP_MIN))
+		return 1;
+#endif
+	return p->rampup_multiplier;
+}
+
 static void
 util_est_dequeue(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep)
 {
 	long last_ewma_diff;
 	struct util_est ue;
+	unsigned int mult;
 	int cpu;
 
 	if (!sched_feat(UTIL_EST))
@@ -3852,11 +3876,50 @@ util_est_dequeue(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep)
 	trace_sched_util_est_cpu(cpu_of(rq_of(cfs_rq)), cfs_rq);
 
 	/*
-	 * Skip update of task's estimated utilization when the task has not
-	 * yet completed an activation, e.g. being migrated.
+	 * A multiplier of 0 says the task does not need util_est; drop the
+	 * estimate so it follows the PELT signal exactly.
 	 */
-	if (!task_sleep)
+	if (sched_feat(UTIL_EST_RAMPUP_ZERO) && !p->rampup_multiplier) {
+		ue = p->se.avg.util_est;
+		ue.ewma = 0;
+		WRITE_ONCE(p->se.avg.util_est, ue);
 		return;
+	}
+
+	/*
+	 * If the task is still running, update its estimated utilization
+	 * ignoring utilization invariance, so a task that suddenly gets busier
+	 * settles on its new util_avg faster. util_est must still behave the
+	 * same at enqueue and dequeue.
+	 */
+	if (!task_sleep) {
+		u64 delta = p->se.delta_exec;
+		unsigned int prev_ewma;
+
+		/*
+		 * Only a task moving to a higher periodic state should ramp up
+		 * faster. A steady periodic task is already described accurately
+		 * by util_avg and must keep its power savings.
+		 */
+		if (task_util(p) <= task_util_dequeued(p) ||
+		    task_util(p) - task_util_dequeued(p) <=
+				SCHED_CAPACITY_SCALE / 100)
+			return;
+
+		ue = p->se.avg.util_est;
+		prev_ewma = ue.ewma;
+
+		do_div(delta, 1000);
+		delta *= task_rampup_multiplier(p);
+		ue.ewma = approximate_util_avg(prev_ewma, delta);
+		if (ue.ewma != prev_ewma)
+			p->se.delta_exec = 0;
+
+		WRITE_ONCE(p->se.avg.util_est, ue);
+		return;
+	}
+
+	p->se.delta_exec = 0;
 
 	/*
 	 * If the PELT values haven't changed since enqueue time,
@@ -3865,6 +3928,12 @@ util_est_dequeue(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep)
 	ue = p->se.avg.util_est;
 	if (ue.enqueued & UTIL_AVG_UNCHANGED)
 		return;
+
+	/*
+	 * Record the utilization at dequeue so the running update can tell a
+	 * task transitioning to a higher periodic state from a steady one.
+	 */
+	p->util_avg_dequeued = task_util(p);
 
 	/*
 	 * Reset EWMA on utilization increases, the moving average is used only
@@ -3911,6 +3980,10 @@ util_est_dequeue(struct cfs_rq *cfs_rq, struct task_struct *p, bool task_sleep)
 	 * Where 'w' is the weight of new samples, which is configured to be
 	 * 0.25, thus making w=1/4 ( >>= UTIL_EST_WEIGHT_SHIFT)
 	 */
+	mult = task_rampup_multiplier(p);
+	if (mult)
+		last_ewma_diff /= mult;
+
 	ue.ewma <<= UTIL_EST_WEIGHT_SHIFT;
 	ue.ewma  += last_ewma_diff;
 	ue.ewma >>= UTIL_EST_WEIGHT_SHIFT;
@@ -3919,6 +3992,13 @@ done:
 
 	/* Update plots for Task's estimated utilization */
 	trace_sched_util_est_task(p, &p->se.avg);
+}
+
+static inline void util_est_update_running(struct cfs_rq *cfs_rq,
+					   struct task_struct *p)
+{
+	util_est_dequeue(cfs_rq, p, false);
+	util_est_enqueue(cfs_rq, p);
 }
 
 static inline bool
@@ -8382,6 +8462,9 @@ done: __maybe_unused;
 
 	update_misfit_status(p, rq);
 
+	if (prev->on_rq)
+		util_est_update_running(&rq->cfs, prev);
+
 	return p;
 
 idle:
@@ -12108,6 +12191,8 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 		cfs_rq = cfs_rq_of(se);
 		entity_tick(cfs_rq, se, queued);
 	}
+
+	util_est_update_running(&rq->cfs, curr);
 
 	if (static_branch_unlikely(&sched_numa_balancing))
 		task_tick_numa(rq, curr);

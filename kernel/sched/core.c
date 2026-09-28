@@ -13,6 +13,7 @@
 #include <linux/irq.h>
 #include <linux/delay.h>
 #include <linux/scs.h>
+#include <linux/sched/signal.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -753,6 +754,9 @@ unsigned int sysctl_sched_uclamp_util_min = SCHED_CAPACITY_SCALE;
 /* Max allowed maximum utilization */
 unsigned int sysctl_sched_uclamp_util_max = SCHED_CAPACITY_SCALE;
 
+/* Default util_est rampup multiplier for tasks that do not set their own */
+unsigned int sysctl_sched_rampup_multiplier __read_mostly = 1;
+
 /* All clamps are required to be less or equal than these values */
 static struct uclamp_se uclamp_default[UCLAMP_CNT];
 
@@ -1192,6 +1196,50 @@ done:
 	mutex_unlock(&uclamp_mutex);
 
 	return result;
+}
+
+/*
+ * Push a new default to every task that has not asked for its own multiplier.
+ */
+static void sched_rampup_multiplier_sync(void)
+{
+	struct task_struct *g, *p;
+
+	rcu_read_lock();
+	for_each_process_thread(g, p) {
+		struct rq_flags rf;
+		struct rq *rq;
+
+		rq = task_rq_lock(p, &rf);
+		if (!p->rampup_multiplier_set)
+			p->rampup_multiplier = sysctl_sched_rampup_multiplier;
+		task_rq_unlock(rq, p, &rf);
+	}
+	rcu_read_unlock();
+}
+
+int sysctl_sched_rampup_multiplier_handler(struct ctl_table *table, int write,
+					   void *buffer, size_t *lenp,
+					   loff_t *ppos)
+{
+	unsigned int old = sysctl_sched_rampup_multiplier;
+	int ret;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (ret)
+		return ret;
+	if (!write)
+		return 0;
+
+	if (sysctl_sched_rampup_multiplier > 16) {
+		sysctl_sched_rampup_multiplier = old;
+		return -EINVAL;
+	}
+
+	if (old != sysctl_sched_rampup_multiplier)
+		sched_rampup_multiplier_sync();
+
+	return 0;
 }
 
 static int uclamp_validate(struct task_struct *p,
@@ -2947,10 +2995,12 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 
 	p->se.on_rq			= 0;
 	p->se.exec_start		= 0;
+	p->se.delta_exec		= 0;
 	p->se.sum_exec_runtime		= 0;
 	p->se.prev_sum_exec_runtime	= 0;
 	p->se.nr_migrations		= 0;
 	p->se.vruntime			= 0;
+	p->util_avg_dequeued		= 0;
 	p->last_sleep_ts		= 0;
 	p->boost			= 0;
 	p->boost_expires		= 0;
@@ -3124,6 +3174,8 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->prio = current->normal_prio;
 
 	uclamp_fork(p);
+	p->rampup_multiplier = sysctl_sched_rampup_multiplier;
+	p->rampup_multiplier_set = 0;
 
 	/*
 	 * Revert to default priority/policy on fork if requested.

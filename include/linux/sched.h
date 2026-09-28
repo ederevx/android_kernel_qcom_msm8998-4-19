@@ -538,6 +538,7 @@ struct sched_entity {
 	unsigned int			on_rq;
 
 	u64				exec_start;
+	u64				delta_exec;
 	u64				sum_exec_runtime;
 	u64				vruntime;
 	u64				prev_sum_exec_runtime;
@@ -880,6 +881,15 @@ struct task_struct {
 	int				boost;
 	u64				boost_period;
 	u64				boost_expires;
+
+	/*
+	 * Per task util_est rampup multiplier: 1 leaves util_est as is, higher
+	 * values scale the running rampup and slow the decay. When the set
+	 * flag is clear the task follows the global default.
+	 */
+	unsigned int			rampup_multiplier;
+	unsigned int			rampup_multiplier_set;
+
 #ifdef CONFIG_SCHED_WALT
 	struct ravg ravg;
 	/*
@@ -909,6 +919,8 @@ struct task_struct {
 	/* Effective clamp values used for a scheduling entity */
 	struct uclamp_se		uclamp[UCLAMP_CNT];
 #endif
+
+	unsigned long			util_avg_dequeued;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	/* List of struct preempt_notifier: */

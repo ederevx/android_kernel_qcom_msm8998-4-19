@@ -32,7 +32,7 @@
 #define VS_CPUCTL_ROOT		"/dev/cpuctl"
 #define VS_PROC_DIR		"vendor_sched"
 #define VS_SCHED_QOS_DIR	"sched_qos"
-#define VS_MAX_VALUE		32
+#define VS_MAX_VALUE		48
 #define VS_MAX_NAME		64
 #define VS_MAX_PATH		128
 #define VS_RAMPUP_MAX		16
@@ -51,6 +51,8 @@
 /* Value nodes are readable, action nodes are write-only, as in Pixel. */
 #define VS_MODE_RW		0644
 #define VS_MODE_WO		0200
+/* Root-only read/write: diagnostics that render per-task state. */
+#define VS_MODE_RW_ROOT		0600
 
 /* A group index of -1 stands for the nodes that are not per group. */
 #define VS_GLOBAL_GROUP		(-1)
@@ -89,6 +91,10 @@ enum vs_kind {
 	VS_TGID_TYPE,
 	VS_RAMPUP_SET,
 	VS_RAMPUP_CLEAR,
+	VS_QOS_MEMBER,
+	VS_QOS_EXTREME,
+	VS_QOS_NONE,
+	VS_QOS_STATE,
 };
 
 /* One node: a name format for the per group nodes, a literal one otherwise. */
@@ -271,6 +277,7 @@ static int vs_rampup_set(char *buf)
 	char *str = strim(buf);
 	char *sep = strchr(str, ':');
 	char saved;
+	int ret;
 
 	if (!sep)
 		return -EINVAL;
@@ -290,6 +297,12 @@ static int vs_rampup_set(char *buf)
 	if (!task)
 		return -ESRCH;
 
+	ret = vs_check_cred(task);
+	if (ret) {
+		put_task_struct(task);
+		return ret;
+	}
+
 	WRITE_ONCE(task->rampup_multiplier, (unsigned int)multiplier);
 	WRITE_ONCE(task->rampup_multiplier_set, 1);
 	put_task_struct(task);
@@ -301,11 +314,12 @@ err:
 	return -EINVAL;
 }
 
-/* A rampup clear write is a bare tid and restores the default multiplier. */
+/* A rampup clear is a bare tid; it does not touch SCHED_QOS membership. */
 static int vs_rampup_clear(char *buf)
 {
 	struct task_struct *task;
 	unsigned long pid;
+	int ret;
 
 	if (kstrtoul(strim(buf), 10, &pid) || !pid)
 		return -EINVAL;
@@ -314,8 +328,57 @@ static int vs_rampup_clear(char *buf)
 	if (!task)
 		return -ESRCH;
 
+	ret = vs_check_cred(task);
+	if (ret) {
+		put_task_struct(task);
+		return ret;
+	}
+
 	WRITE_ONCE(task->rampup_multiplier, sysctl_sched_rampup_multiplier);
 	WRITE_ONCE(task->rampup_multiplier_set, 0);
+	put_task_struct(task);
+
+	return 0;
+}
+
+/* A SCHED_QOS membership write is a bare tid. */
+static int vs_set_sched_qos(char *buf, unsigned int state)
+{
+	struct task_struct *task;
+	unsigned long pid;
+	int ret;
+
+	if (kstrtoul(strim(buf), 10, &pid) || !pid)
+		return -EINVAL;
+
+	task = find_get_task_by_vpid((pid_t)pid);
+	if (!task)
+		return -ESRCH;
+
+	ret = vs_check_cred(task);
+	if (ret) {
+		put_task_struct(task);
+		return ret;
+	}
+
+	/*
+	 * Dropping QOS drops the task's rampup with it. The gate stops a stale
+	 * value being used while the task is unset; only this reset stops it
+	 * being resurrected if the task is later re-registered. Value before
+	 * flag, as the set path does.
+	 *
+	 * Moving between the two grants deliberately leaves the stored value
+	 * alone: the gate decides whether it is honoured, so a promotion to
+	 * extreme takes effect without a re-vote and a demotion to standard
+	 * cannot discard a multiplier the HAL has just written.
+	 */
+	if (state == SCHED_QOS_NONE) {
+		WRITE_ONCE(task->rampup_multiplier,
+			   READ_ONCE(sysctl_sched_rampup_multiplier));
+		WRITE_ONCE(task->rampup_multiplier_set, 0);
+	}
+
+	WRITE_ONCE(task->sched_qos_set, state);
 	put_task_struct(task);
 
 	return 0;
@@ -377,6 +440,7 @@ static int vs_node_apply(struct vs_node *node, char *buf, char *value,
 			 size_t len)
 {
 	const char *stored;
+	char state[VS_MAX_VALUE];
 	int ret;
 
 	switch (node->kind) {
@@ -441,6 +505,51 @@ static int vs_node_apply(struct vs_node *node, char *buf, char *value,
 
 		stored = buf;
 		break;
+	case VS_QOS_MEMBER:
+		ret = vs_set_sched_qos(buf, SCHED_QOS_MEMBER);
+		if (ret < 0)
+			return ret;
+
+		/* The node reports the tid it was given. */
+		stored = buf;
+		break;
+	case VS_QOS_EXTREME:
+		ret = vs_set_sched_qos(buf, SCHED_QOS_EXTREME);
+		if (ret < 0)
+			return ret;
+
+		stored = buf;
+		break;
+	case VS_QOS_NONE:
+		ret = vs_set_sched_qos(buf, SCHED_QOS_NONE);
+		if (ret < 0)
+			return ret;
+
+		stored = buf;
+		break;
+	case VS_QOS_STATE: {
+		struct task_struct *task;
+		unsigned long pid;
+
+		if (kstrtoul(strim(buf), 10, &pid) || !pid)
+			return -EINVAL;
+
+		task = find_get_task_by_vpid((pid_t)pid);
+		if (!task)
+			return -ESRCH;
+
+		snprintf(state, sizeof(state),
+			 "qos=%u set=%u mult=%u effective=%u",
+			 READ_ONCE(task->sched_qos_set),
+			 READ_ONCE(task->rampup_multiplier_set),
+			 READ_ONCE(task->rampup_multiplier),
+			 task_rampup_multiplier(task));
+		put_task_struct(task);
+
+		stored = state;
+		ret = 0;
+		break;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -526,6 +635,9 @@ static umode_t vs_node_mode(enum vs_kind kind)
 	case VS_UCLAMP_MAX:
 	case VS_PREFER_IDLE:
 		return VS_MODE_RW;
+	case VS_QOS_STATE:
+		/* The only readable sched_qos node, and root-only. */
+		return VS_MODE_RW_ROOT;
 	default:
 		return VS_MODE_WO;
 	}
@@ -583,8 +695,12 @@ static const struct vs_desc vs_global_nodes[] = {
 
 /* Nodes the power HAL opens directly, outside powerhint.json. */
 static const struct vs_desc vs_sched_qos_nodes[] = {
-	{ "rampup_multiplier_set",	VS_RAMPUP_SET },
-	{ "rampup_multiplier_clear",	VS_RAMPUP_CLEAR },
+	{ "rampup_multiplier_set",		VS_RAMPUP_SET },
+	{ "rampup_multiplier_clear",		VS_RAMPUP_CLEAR },
+	{ "sched_qos_sensitive_standard",	VS_QOS_MEMBER },
+	{ "sched_qos_sensitive_extreme",	VS_QOS_EXTREME },
+	{ "sched_qos_none",			VS_QOS_NONE },
+	{ "qos_state",				VS_QOS_STATE },
 };
 
 static void vs_add_nodes(struct proc_dir_entry *parent,

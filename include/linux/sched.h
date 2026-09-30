@@ -830,6 +830,19 @@ struct wake_q_node {
 	struct wake_q_node *next;
 };
 
+/*
+ * Per-task SCHED_QOS registration. The standard grant is prefer-idle; the
+ * extreme grant is that plus the util_est rampup multiplier.
+ */
+enum sched_qos_state {
+	SCHED_QOS_NONE		= 0,
+	SCHED_QOS_MEMBER	= 1,
+	SCHED_QOS_EXTREME	= 2,
+};
+
+/* Effective util_est rampup multiplier; defined in kernel/sched/fair.c. */
+unsigned int task_rampup_multiplier(struct task_struct *p);
+
 struct task_struct {
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/*
@@ -897,6 +910,13 @@ struct task_struct {
 	 */
 	unsigned int			rampup_multiplier;
 	unsigned int			rampup_multiplier_set;
+
+	/*
+	 * Per-task SCHED_QOS marker: the entitlement for both the util_est
+	 * rampup multiplier and the prefer-idle latency bias. An explicit
+	 * registration, so a task never registered is not a member.
+	 */
+	unsigned int			sched_qos_set;
 
 #ifdef CONFIG_SCHED_WALT
 	struct ravg ravg;

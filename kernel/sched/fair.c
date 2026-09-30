@@ -3205,6 +3205,22 @@ static inline int per_task_boost(struct task_struct *p)
 	return p->boost;
 }
 
+/*
+ * Effective util_est rampup multiplier for a task: the power HAL's per-task
+ * value while the task holds the SCHED_QOS extreme grant, the global default
+ * otherwise. The standard grant leaves the stored value alone but is not
+ * entitled to it, so a promotion to extreme takes effect without the HAL
+ * having to vote again. Defined outside the CONFIG_SMP block so the vendor
+ * shim can report it; the predicate stays here, in one place.
+ */
+unsigned int task_rampup_multiplier(struct task_struct *p)
+{
+	if (READ_ONCE(p->rampup_multiplier_set) && !sched_qos_extreme(p))
+		return READ_ONCE(sysctl_sched_rampup_multiplier);
+
+	return READ_ONCE(p->rampup_multiplier);
+}
+
 #ifdef CONFIG_SMP
 #ifdef CONFIG_FAIR_GROUP_SCHED
 /**
@@ -3838,17 +3854,6 @@ static inline bool within_margin(int value, int margin)
 	return ((unsigned int)(value + margin - 1) < (2 * margin - 1));
 }
 
-/*
- * The multiplier is taken exactly as stored: a task carries the global default
- * until the power HAL writes a per-task value, and only the HAL raises it above
- * that, so the stored value needs no gate here. 0 and 1 keep their global
- * meaning: 0 disables util_est for every task and 1 is the normal behavior.
- */
-static unsigned int task_rampup_multiplier(struct task_struct *p)
-{
-	return READ_ONCE(p->rampup_multiplier);
-}
-
 static inline void util_est_dequeue(struct cfs_rq *cfs_rq,
 				    struct task_struct *p)
 {
@@ -3882,7 +3887,7 @@ static inline void util_est_update(struct cfs_rq *cfs_rq,
 	 * A multiplier of 0 says the task does not need util_est; drop the
 	 * estimate so it follows the PELT signal exactly.
 	 */
-	if (sched_feat(UTIL_EST_RAMPUP_ZERO) && !p->rampup_multiplier) {
+	if (sched_feat(UTIL_EST_RAMPUP_ZERO) && !task_rampup_multiplier(p)) {
 		ue = p->se.avg.util_est;
 		ue.ewma = 0;
 		WRITE_ONCE(p->se.avg.util_est, ue);

@@ -262,6 +262,12 @@
 	};
 };
 
+&usb3 {
+	dwc3@a800000 {
+		maximum-speed = "high-speed";
+	};
+};
+
 &pm8998_gpios {
 	/* GPIO 6 for Vol+ Key */
 	key_vol_up {

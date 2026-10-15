@@ -134,6 +134,7 @@ enum print_reason {
 #define PL_FCC_LOW_VOTER		"PL_FCC_LOW_VOTER"
 #define WBC_VOTER			"WBC_VOTER"
 #define MOISTURE_VOTER			"MOISTURE_VOTER"
+#define DASH_VOTER			"DASH_VOTER"
 #define HVDCP2_ICL_VOTER		"HVDCP2_ICL_VOTER"
 #define OV_VOTER			"OV_VOTER"
 #define FG_ESR_VOTER			"FG_ESR_VOTER"
@@ -492,7 +493,6 @@ struct smb_charger {
 	int			ck_dash_count;
 	int			recovery_boost_count;
 
-	bool			otg_switch;
 	bool			use_fake_temp;
 	bool			use_fake_protect_sts;
 	bool			dash_present;

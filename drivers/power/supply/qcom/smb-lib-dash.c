@@ -24,7 +24,6 @@
 #include "smb-lib.h"
 #include "smb-reg.h"
 
-#define POWER_ROLE_BIT (DFP_EN_CMD_BIT | UFP_EN_CMD_BIT)
 #define SOFT_CHG_TERM_CURRENT 100 /* 100mA */
 #define CHG_SOFT_OVP_MV 5800
 #define CHG_SOFT_UVP_MV 4300
@@ -41,9 +40,6 @@ enum chg_protect_status_type {
 	PROTECT_BATT_TEMP_REGION_WARM /* 9: 45 < t <= 55   */
 };
 
-const union power_supply_propval otg_on = {1,};
-const union power_supply_propval otg_off = {0,};
-
 struct smb_charger *g_chg;
 
 /* SOC-backup register access via the primary PMIC PON regmap. */
@@ -57,7 +53,6 @@ int smblib_set_prop_chg_voltage(struct smb_charger *chg, const union power_suppl
 int smblib_set_prop_batt_temp(struct smb_charger *chg, const union power_supply_propval *val);
 int smblib_set_prop_chg_protect_status(struct smb_charger *chg, const union power_supply_propval *val);
 int smblib_set_prop_charge_parameter_set(struct smb_charger *chg);
-int op_set_prop_otg_switch(struct smb_charger *chg, const union power_supply_propval *val);
 static inline void op_dump_reg(struct smb_charger *chip, u16 addr_start, u16 addr_end);
 void op_dump_regs(struct smb_charger *chip);
 void op_handle_usb_plugin(struct smb_charger *chg);
@@ -91,6 +86,8 @@ int fuelgauge_battery_temp_region_get(void);
 static void op_battery_status_set(struct smb_charger *chg, enum batt_status_type battery_status);
 static void op_battery_temp_region_set(struct smb_charger *chg, enum temp_region_type batt_temp_region);
 static void set_usb_switch(struct smb_charger *chg, bool enable);
+static int op_dash_disable_role_switch(struct smb_charger *chg, bool disable);
+static void op_dash_enable_role_switch(struct smb_charger *chg);
 static void switch_fast_chg(struct smb_charger *chg);
 static void op_re_kick_allowed_voltage(struct smb_charger *chg);
 static void op_re_kick_work(struct work_struct *work);
@@ -221,55 +218,6 @@ int smblib_set_prop_charge_parameter_set(struct smb_charger *chg)
 	return 0;
 }
 
-int op_set_prop_otg_switch(struct smb_charger *chg,
-				  const union power_supply_propval *val)
-{
-	int rc = 0;
-	u8 power_role;
-	u8 ctrl = 0;
-	bool pre_otg_switch;
-	int i = 0;
-
-	pre_otg_switch = chg->otg_switch;
-	chg->otg_switch = val->intval;
-
-	if (chg->otg_switch == pre_otg_switch)
-		return rc;
-
-	pr_info("set otg_switch=%d\n", chg->otg_switch);
-	if (chg->otg_switch)
-		power_role = 0;
-	else
-		power_role = UFP_EN_CMD_BIT;
-
-	for (i = 0; i < 10; i++) {
-		rc = smblib_masked_write(chg,
-					TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG,
-					TYPEC_POWER_ROLE_CMD_MASK, power_role);
-		if (rc < 0) {
-			smblib_err(chg, "Couldn't write 0x%02x to 0x1368 rc=%d\n",
-				power_role, rc);
-			return rc;
-		}
-		usleep_range(30000, 31000);
-		ctrl = 0;
-		rc = smblib_read(chg,
-			TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG, &ctrl);
-		if (rc < 0) {
-			smblib_err(chg, "Couldn't read err=%d\n", rc);
-			return rc;
-		}
-		if ((power_role == 0) && ((ctrl & POWER_ROLE_BIT) == 0))
-			break;
-		if ((power_role == UFP_EN_CMD_BIT) && (ctrl | UFP_EN_CMD_BIT))
-			break;
-	}
-	pr_info("retry time = %d,ctrl = %d\n", i, ctrl);
-	if (i == 10)
-		pr_err("retry time over\n");
-
-	return rc;
-}
 
 static inline void op_dump_reg(struct smb_charger *chip,
 	u16 addr_start, u16 addr_end)
@@ -509,6 +457,7 @@ void op_handle_usb_removal(struct smb_charger *chg)
 	set_prop_fast_switch_to_normal_false(chg);
 	set_usb_switch(chg, false);
 	set_dash_charger_present(false);
+	op_dash_enable_role_switch(chg);
 
 	chg->chg_ovp = false;
 	chg->dash_on = false;
@@ -817,21 +766,67 @@ static void op_battery_temp_region_set(struct smb_charger *chg,
 	pr_err("set temp_region=%d\n", chg->mBattTempRegion);
 }
 
+static int op_dash_disable_role_switch(struct smb_charger *chg, bool disable)
+{
+	int rc;
+
+	if (!chg->disable_power_role_switch)
+		return -ENODEV;
+
+	rc = vote(chg->disable_power_role_switch, DASH_VOTER, disable, 0);
+	if (rc)
+		smblib_err(chg, "Couldn't %s power role switch rc=%d\n",
+				disable ? "disable" : "enable", rc);
+
+	return rc;
+}
+
+static bool op_dash_is_sink_only(struct smb_charger *chg)
+{
+	u8 ctrl;
+	int rc;
+
+	rc = smblib_read(chg, TYPE_C_INTRPT_ENB_SOFTWARE_CTRL_REG, &ctrl);
+	if (rc < 0) {
+		smblib_err(chg, "Couldn't read SOFTWARE_CTRL_REG rc=%d\n", rc);
+		return false;
+	}
+
+	return (ctrl & TYPEC_POWER_ROLE_CMD_MASK) == UFP_EN_CMD_BIT;
+}
+
+static void op_dash_enable_role_switch(struct smb_charger *chg)
+{
+	int rc;
+
+	if (!chg->disable_power_role_switch)
+		return;
+
+	/* vote() records even a failed write; verify, then re-elect. */
+	op_dash_disable_role_switch(chg, false);
+
+	if (get_effective_result(chg->disable_power_role_switch))
+		return;
+
+	if (!op_dash_is_sink_only(chg))
+		return;
+
+	smblib_err(chg, "DASH sink-only release not applied, re-electing\n");
+	rc = rerun_election(chg->disable_power_role_switch);
+	if (rc)
+		smblib_err(chg, "Couldn't re-elect power role switch rc=%d\n", rc);
+}
 static void set_usb_switch(struct smb_charger *chg, bool enable)
 {
 	int retrger_time;
 
 	if (!fast_charger) {
 		pr_err("no fast_charger register found\n");
-		// Enable otg feature when not connected to dash charger
-		op_set_prop_otg_switch(chg, &otg_on);
 		return;
 	}
 
 	if (enable) {
 		pr_err("switch on fastchg\n");
-		// Disable otg feature when connected to dash charger
-		op_set_prop_otg_switch(chg, &otg_off);
 		if (chg->boot_usb_present && chg->re_trigr_dash_done) {
 			vote(chg->usb_icl_votable, AICL_RERUN_VOTER,
 					true, 0);
@@ -855,8 +850,6 @@ static void set_usb_switch(struct smb_charger *chg, bool enable)
 		pr_err("switch off fastchg\n");
 		usb_sw_gpio_set(0);
 		mcu_en_gpio_set(1);
-		// Enable otg feature when disconnected from dash charger
-		op_set_prop_otg_switch(chg, &otg_on);
 	}
 }
 
@@ -864,6 +857,7 @@ static void switch_fast_chg(struct smb_charger *chg)
 {
 	bool fastchg_allowed, is_allowed;
 	static bool pre_fastchg_allowed, pre_is_allowed;
+	int rc;
 
 	mutex_lock(&chg->sw_dash_lock);
 	if (op_is_usb_switch_on(chg)) {
@@ -887,8 +881,17 @@ static void switch_fast_chg(struct smb_charger *chg)
 			pr_info("is_allowed = %d\n", is_allowed);
 		}
 		if (is_allowed) {
-			set_usb_switch(chg, true);
-			op_set_fast_chg_allow(chg, true);
+			rc = op_dash_disable_role_switch(chg, true);
+			if (!rc && !op_dash_is_sink_only(chg)) {
+				smblib_err(chg, "DASH sink-only not applied\n");
+				rc = -EINVAL;
+			}
+			if (rc) {
+				op_dash_enable_role_switch(chg);
+			} else {
+				set_usb_switch(chg, true);
+				op_set_fast_chg_allow(chg, true);
+			}
 		}
 	}
 	mutex_unlock(&chg->sw_dash_lock);
@@ -2431,9 +2434,6 @@ void op_dash_charger_init(struct smb_charger *chg)
 		pr_err("op_dash_charger_init: unable to register fb_notifier\n");
 #endif
 	op_set_collapse_fet(chg, false);
-
-	/* Enable OTG on init to match stock DASH behavior */
-	op_set_prop_otg_switch(chg, &otg_on);
 }
 
 void op_dash_charger_deinit(struct smb_charger *chg)

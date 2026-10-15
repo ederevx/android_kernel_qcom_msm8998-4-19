@@ -60,6 +60,7 @@ enum print_reason {
 #define REDET_COUTNT			5
 #define APSD_CHECK_COUTNT		15
 #define DASH_CHECK_COUNT		4
+#define DASH_GIVEUP_COUNT		14 /* (14 + 1) x TIME_200MS = TIME_3S */
 #define BOOST_BACK_COUNT		8
 #define HEARTBEAT_INTERVAL_MS		6000
 #define CHG_TIMEOUT_COUNT		6000 /* 10hr */
@@ -512,6 +513,7 @@ struct smb_charger {
 	bool			pd_disabled;
 	bool			op_apsd_done;
 	bool			re_trigr_dash_done;
+	bool			dash_handshake_failed;
 	bool			boot_usb_present;
 	bool			is_aging_test;
 	bool			revert_boost_trigger;

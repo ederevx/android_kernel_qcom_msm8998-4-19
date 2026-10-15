@@ -417,6 +417,8 @@ bool is_fastchg_allowed(struct smb_charger *chg)
 		return false;
 	if (chg->usb_enum_status)
 		return false;
+	if (chg->dash_handshake_failed)
+		return false;
 	if (!chg->chg_enabled) {
 		pr_err("fast charging is not allowed by userspace\n");
 		return false;
@@ -476,6 +478,7 @@ void op_handle_usb_removal(struct smb_charger *chg)
 	chg->op_apsd_done = 0;
 	chg->ck_dash_count = 0;
 	chg->re_trigr_dash_done = 0;
+	chg->dash_handshake_failed = false;
 	chg->recovery_boost_count = 0;
 	op_battery_temp_region_set(chg, BATT_TEMP_INVALID);
 }
@@ -927,33 +930,56 @@ static void op_re_kick_work(struct work_struct *work)
 	}
 }
 
+static void op_release_dash_path(struct smb_charger *chg)
+{
+	op_set_fast_chg_allow(chg, false);
+	set_usb_switch(chg, false);
+	op_dash_enable_role_switch(chg);
+	chg->ck_dash_count = 0;
+}
+
 static void retrigger_dash_work(struct work_struct *work)
 {
 	struct smb_charger *chg = container_of(work,
 			struct smb_charger,
 			rechk_sw_dsh_work.work);
+	mutex_lock(&chg->sw_dash_lock);
 	pr_debug("chg->ck_dash_count=%d\n", chg->ck_dash_count);
 	if (chg->usb_enum_status)
-		return;
-	if (chg->dash_present) {
+		goto out;
+	if (chg->dash_present || !chg->vbus_present) {
 		chg->ck_dash_count = 0;
-		return;
+		goto out;
 	}
-	if (!chg->vbus_present) {
+	if (chg->re_trigr_dash_done
+			&& chg->ck_dash_count >= DASH_GIVEUP_COUNT) {
 		chg->ck_dash_count = 0;
-		return;
+		/* Unplug holds chg->lock, which nests inside sw_dash_lock. */
+		mutex_lock(&chg->lock);
+		if (chg->vbus_present) {
+			pr_info("dash handshake failed, restoring the port\n");
+			op_release_dash_path(chg);
+			chg->dash_handshake_failed = true;
+		}
+		mutex_unlock(&chg->lock);
+		goto out;
 	}
-	if (chg->ck_dash_count >= DASH_CHECK_COUNT) {
+	if (!chg->re_trigr_dash_done
+			&& chg->ck_dash_count >= DASH_CHECK_COUNT) {
+		chg->ck_dash_count = 0;
 		pr_info("retrger dash\n");
 		chg->re_trigr_dash_done = true;
 		set_usb_switch(chg, false);
 		set_usb_switch(chg, true);
-		chg->ck_dash_count = 0;
+		schedule_delayed_work(&chg->rechk_sw_dsh_work,
+				msecs_to_jiffies(TIME_200MS));
 	} else {
 		chg->ck_dash_count++;
 		schedule_delayed_work(&chg->rechk_sw_dsh_work,
 				msecs_to_jiffies(TIME_200MS));
 	}
+out:
+	mutex_unlock(&chg->sw_dash_lock);
 }
 
 static void op_chek_apsd_done_work(struct work_struct *work)
@@ -1124,13 +1150,19 @@ static int set_dash_charger_present(int status)
 	if (g_chg) {
 		pre_dash_present = g_chg->dash_present;
 		charger_present = is_usb_present(g_chg);
+		if (status && charger_present)
+			mutex_lock(&g_chg->sw_dash_lock);
 		g_chg->dash_present = status && charger_present;
 		if (g_chg->dash_present && !pre_dash_present) {
 			pr_err("set dash online\n");
+			g_chg->dash_handshake_failed = false;
+			g_chg->re_trigr_dash_done = false;
 			g_chg->usb_psy_desc.type = POWER_SUPPLY_TYPE_USB_DCP;
 			vote(g_chg->usb_icl_votable, PD_VOTER, true,
 					DEFAULT_WALL_CHG_MA * 1000);
 		}
+		if (status && charger_present)
+			mutex_unlock(&g_chg->sw_dash_lock);
 		power_supply_changed(g_chg->batt_psy);
 		pr_info("dash_present = %d, charger_present = %d\n",
 				g_chg->dash_present, charger_present);

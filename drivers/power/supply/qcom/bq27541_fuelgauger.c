@@ -1599,7 +1599,7 @@ static int sealed(void)
 	/*bq27541_cntl_cmd(di,CONTROL_STATUS);*/
 	usleep_range(10000, 10001);
 	bq27541_read_i2c(CONTROL_STATUS, &value, 0, bq27541_di);
-	pr_info(" REG_CNTL: 0x%x\n", value);
+	pr_debug(" REG_CNTL: 0x%x\n", value);
 
 	if (bq27541_di->device_type == DEVICE_BQ27541)
 		return value & BIT(14);
@@ -1624,6 +1624,7 @@ static int seal(void)
 			return 1;
 		usleep_range(10000, 10001);
 	}
+	pr_err("bq27541/27411 seal failed\n");
 	return 0;
 }
 

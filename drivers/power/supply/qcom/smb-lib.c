@@ -1878,6 +1878,14 @@ int smblib_get_prop_batt_status(struct smb_charger *chg,
 		return rc;
 	}
 
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	/* input suspended by userspace: still plugged in, but not charging */
+	if (get_client_vote_locked(chg->usb_icl_votable, USER_VOTER) == 0) {
+		val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+		return rc;
+	}
+#endif
+
 	switch (stat) {
 	case TRICKLE_CHARGE:
 	case PRE_CHARGE:
@@ -2465,10 +2473,12 @@ int smblib_get_prop_usb_online(struct smb_charger *chg,
 	int rc = 0;
 	u8 stat;
 
+#ifndef CONFIG_ARCH_ONEPLUS_MSM8998
 	if (get_client_vote_locked(chg->usb_icl_votable, USER_VOTER) == 0) {
 		val->intval = false;
 		return rc;
 	}
+#endif
 
 	if (chg->vbus_present) {
 		val->intval = true;

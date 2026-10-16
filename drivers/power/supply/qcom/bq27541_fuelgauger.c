@@ -1317,8 +1317,10 @@ static void op_bq_reset(void)
 	pr_info("%s begin\n", __func__);
 	bq27541_set_allow_reading(false);
 	if (sealed()) {
-		if (!unseal(BQ27411_UNSEAL_KEY))
+		if (!unseal(BQ27411_UNSEAL_KEY)) {
+			bq27541_set_allow_reading(true);
 			return;
+		}
 		msleep(50);
 	}
 	bq27541_i2c_txsubcmd(BQ27541_SUBCMD_CTNL_STATUS,
@@ -1594,11 +1596,16 @@ static int sealed(void)
 {
 	/*return control_cmd_read(di, CONTROL_STATUS) & (1 << 13);*/
 	int value = 0;
+	int rc;
 
 	bq27541_cntl_cmd(bq27541_di, CONTROL_STATUS);
 	/*bq27541_cntl_cmd(di,CONTROL_STATUS);*/
 	usleep_range(10000, 10001);
-	bq27541_read_i2c(CONTROL_STATUS, &value, 0, bq27541_di);
+	rc = bq27541_read_i2c(CONTROL_STATUS, &value, 0, bq27541_di);
+	if (rc) {
+		pr_err("bq27541: read CONTROL_STATUS failed rc=%d\n", rc);
+		return rc;
+	}
 	pr_debug(" REG_CNTL: 0x%x\n", value);
 
 	if (bq27541_di->device_type == DEVICE_BQ27541)

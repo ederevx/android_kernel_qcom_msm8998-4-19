@@ -131,10 +131,8 @@
 			<0x2ac 0x0>, <0x2b4 0x0>, <0x2bc 0x0>, <0x2c4 0x0>, /* VIG */
 			<0x2ac 0x8>, <0x2b4 0x8>, <0x2c4 0x8>, <0x2c4 0xc>;
 
-		qcom,sde-sspp-csc-off = <0x1a00>;
 		qcom,sde-csc-type = "csc-10bit";
 		qcom,sde-qseed-type = "qseedv3";
-		qcom,sde-sspp-qseed-off = <0xa00>;
 		qcom,sde-mixer-linewidth = <2560>;
 		qcom,sde-sspp-linewidth = <2560>;
 		qcom,sde-wb-linewidth = <2560>;
@@ -142,7 +140,6 @@
 		qcom,sde-highest-bank-bit = <0x2>;
 		qcom,sde-ubwc-version = <0x100>;
 		qcom,sde-panic-per-pipe;
-		qcom,sde-has-cdp;
 		qcom,sde-has-src-split;
 		qcom,sde-has-dim-layer;
 		qcom,sde-has-idle-pc;
@@ -153,7 +150,6 @@
 		qcom,sde-min-llcc-ib-kbps = <800000>;
 		qcom,sde-min-dram-ib-kbps = <800000>;
 		qcom,sde-dram-channels = <2>;
-		qcom,sde-num-nrt-paths = <1>;
 
 		qcom,sde-vbif-qos-rt-remap = <1 2 2 2>;
 		qcom,sde-vbif-qos-nrt-remap = <1 1 1 1>;

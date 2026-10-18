@@ -16,6 +16,25 @@
 		compatible = "qcom,wb-display";
 		cell-index = <0>;
 		label = "wb_display";
+		status = "disabled";
+	};
+
+	sde_dsi: qcom,dsi-display-primary {
+		compatible = "qcom,dsi-display";
+		label = "primary";
+		status = "disabled";
+
+		qcom,dsi-ctrl = <&sde_dsi0 &sde_dsi1>;
+		qcom,dsi-phy = <&mdss_dsi_phy0 &mdss_dsi_phy1>;
+
+		clocks = <&mdss_dsi0_pll BYTECLK_MUX_0_CLK>,
+			 <&mdss_dsi0_pll PCLK_MUX_0_CLK>,
+			 <&mdss_dsi1_pll BYTECLK_MUX_1_CLK>,
+			 <&mdss_dsi1_pll PCLK_MUX_1_CLK>;
+		clock-names = "mux_byte_clk0", "mux_pixel_clk0",
+			      "mux_byte_clk1", "mux_pixel_clk1";
+
+		qcom,mdp = <&sde_kms>;
 	};
 
 	msm_sde_ext_disp: qcom,msm_ext_disp {
@@ -32,11 +51,13 @@
 		label = "sde_hdmi";
 		qcom,display-type = "secondary";
 		qcom,msm_ext_disp = <&msm_sde_ext_disp>;
+		status = "disabled";
 	};
 
 	sde_hdmi_cec: qcom,hdmi-cec@c9a0000 {
 		compatible = "qcom,hdmi-cec";
 		label = "sde_hdmi_cec";
+		status = "disabled";
 		qcom,hdmi-dev = <&sde_hdmi>;
 		interrupt-parent = <&sde_hdmi_tx>;
 		interrupts = <1 0>;
@@ -71,5 +92,5 @@
 };
 
 &sde_kms {
-	connectors = <&sde_wb>; //<&sde_hdmi_tx &sde_hdmi &sde_wb>;
+	connectors = <&sde_dsi>;
 };

@@ -88,9 +88,6 @@
 		qcom,sde-dspp-off = <0x55000 0x57000>;
 		qcom,sde-dspp-size = <0x22c>;
 
-		qcom,sde-dspp-ad-off = <0x79000 0x79800>;
-		qcom,sde-dspp-ad-version = <0x00030000>;
-
 		qcom,sde-wb-off = <0x66000>;
 		qcom,sde-wb-size = <0x2c0>;
 
@@ -112,9 +109,6 @@
 
 		qcom,sde-te2-off = <0x2000 0x2000 0x0 0x0 0x0>;
 
-		qcom,sde-cdm-off = <0x7a200>;
-		qcom,sde-cdm-size = <0x224>;
-
 		qcom,sde-dsc-off = <0x81000 0x81400 0x0 0x0>;
 		qcom,sde-dsc-size = <0x140>;
 
@@ -132,14 +126,6 @@
 					1 5 9 13>;
 		qcom,sde-sspp-excl-rect = <1 1 1 1
 					   1 1 1 1>;
-
-		qcom,sde-has-dest-scaler;
-		qcom,sde-max-dest-scaler-input-linewidth = <2048>;
-		qcom,sde-max-dest-scaler-output-linewidth = <2560>;
-		qcom,sde-dest-scaler-top-off = <0x00061000>;
-		qcom,sde-dest-scaler-top-size = <0x14>;
-		qcom,sde-dest-scaler-off = <0x800 0x1000>;
-		qcom,sde-dest-scaler-size = <0x88>;
 
 		/* offsets are relative to "mdp_phys + qcom,sde-off */
 		qcom,sde-sspp-clk-ctrl =
@@ -214,10 +200,6 @@
 
 		qcom,sde-qos-cpu-mask = <0x3>;
 		qcom,sde-qos-cpu-dma-latency = <300>;
-
-		qcom,sde-reg-dma-off = <0>;
-		qcom,sde-reg-dma-version = <0x1>;
-		qcom,sde-reg-dma-trigger-off = <0x119c>;
 
 		qcom,sde-vbif-off = <0>;
 		qcom,sde-vbif-size = <0x1040>;

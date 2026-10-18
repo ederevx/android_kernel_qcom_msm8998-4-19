@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config DRM_SDE_TECHPACK
+	bool "Qualcomm SDE display driver (techpack)"
+	depends on ARCH_MSM8998
+	depends on DRM=y
+	depends on DRM_MSM=n
+	depends on !FB_MSM_MDSS
+	select DRM_PANEL
+	select SHMEM
+	select SYNC_FILE
+	help
+	  Build the downstream Qualcomm SDE/KMS display driver found in
+	  techpack/display. It takes over the MDSS hardware from the fbdev
+	  stack and from the upstream MSM driver, so it cannot be enabled
+	  together with either of them.

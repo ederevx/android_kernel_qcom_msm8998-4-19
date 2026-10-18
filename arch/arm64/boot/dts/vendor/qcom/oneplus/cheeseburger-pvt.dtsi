@@ -29,6 +29,6 @@
 	};
 };
 
-&mdss_dsi0 {
-	qcom,dsi-pref-prim-pan = <&dsi_samsung_s6e3fa5_1080p_cmd>;
+&sde_dsi {
+	qcom,dsi-default-panel = <&dsi_samsung_s6e3fa5_1080p_cmd>;
 };

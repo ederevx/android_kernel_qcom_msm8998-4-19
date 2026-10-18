@@ -14,7 +14,7 @@
 	sde_kms: qcom,sde_kms@c900000 {
 		compatible = "qcom,sde-kms";
 		reg = <0x0c900000 0x90000>,
-		      <0x0c9b0000 0x2008>,
+		      <0x0c9b0000 0x1040>,
 		      <0x0c9b8000 0x1040>;
 		reg-names = "mdp_phys", "vbif_phys",
 			    "vbif_nrt_phys";
@@ -44,14 +44,13 @@
 			"lut_clk";
 
 		clock-rate = <0 0 0 412500000 412500000 0 0 0 0 19200000 412500000>;
-		clock-max-rate = <0 0 0 550000000 550000000 0 0 0 0 19200000 550000000>;
+		clock-max-rate = <0 0 0 412500000 412500000 0 0 0 0 19200000 412500000>;
 
 		/* interrupt config */
 		interrupt-parent = <&intc>;
 		interrupts = <0 83 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-controller;
 		#interrupt-cells = <1>;
-		iommus = <&mmss_smmu 0>;
 
 		#power-domain-cells = <0>;
 
@@ -260,31 +259,20 @@
 		};
 
 		smmu_kms_unsec: qcom,smmu_kms_unsec_cb {
-			compatible = "qcom,smmu_sde_unsec_legacy";
+			compatible = "qcom,smmu_sde_unsec";
 			iommus = <&mmss_smmu 0>;
-			gdsc-mdss-supply = <&gdsc_bimc_smmu>;
-			clocks = <&clock_rpmcc RPM_SMD_MMSSNOC_AXI_CLK>,
-				<&clock_mmss MMSS_MNOC_AHB_CLK>,
-				<&clock_mmss MMSS_BIMC_SMMU_AHB_CLK>,
-				<&clock_mmss MMSS_BIMC_SMMU_AXI_CLK>;
-			clock-names = "mmss_noc_axi_clk",
-					"mmss_noc_ahb_clk",
-					"mmss_smmu_ahb_clk",
-					"mmss_smmu_axi_clk";
+			qcom,iommu-dma-addr-pool = <0x00020000 0xfffe0000>;
+			qcom,iommu-faults = "non-fatal";
+			qcom,iommu-earlymap;
 		};
 
 		smmu_kms_sec: qcom,smmu_kms_sec_cb {
-			compatible = "qcom,smmu_sde_sec_legacy";
+			compatible = "qcom,smmu_sde_sec";
 			iommus = <&mmss_smmu 1>;
-			gdsc-mdss-supply = <&gdsc_bimc_smmu>;
-			clocks = <&clock_rpmcc RPM_SMD_MMSSNOC_AXI_CLK>,
-				<&clock_mmss MMSS_MNOC_AHB_CLK>,
-				<&clock_mmss MMSS_BIMC_SMMU_AHB_CLK>,
-				<&clock_mmss MMSS_BIMC_SMMU_AXI_CLK>;
-			clock-names = "mmss_noc_axi_clk",
-					"mmss_noc_ahb_clk",
-					"mmss_smmu_ahb_clk",
-					"mmss_smmu_axi_clk";
+			qcom,iommu-dma-addr-pool = <0x00020000 0xfffe0000>;
+			qcom,iommu-faults = "non-fatal";
+			qcom,iommu-vmid = <0xa>;
+			status = "disabled";
 		};
 
 		/* data and reg bus scale settings */
@@ -343,7 +331,6 @@
 			"byte_intf_clk";
 
 		qcom,null-insertion-enabled;
-		qcom,link-hs-clk-always-full-reconfigure;
 
 		/* Bus Scale Settings */
 		qcom,msm-bus,name = "mdss_dsi";
@@ -415,7 +402,6 @@
 			"byte_intf_clk";
 
 		qcom,null-insertion-enabled;
-		qcom,link-hs-clk-always-full-reconfigure;
 
 		/* Bus Scale Settings */
 		qcom,msm-bus,name = "mdss_dsi1";
@@ -454,7 +440,7 @@
 		};
 	};
 
-	mdss_dsi_phy0: qcom,mdss_dsi_phy0@ae94400 {
+	mdss_dsi_phy0: qcom,mdss_dsi_phy0@c994400 {
 		compatible = "qcom,dsi-phy-v3.0";
 		label = "dsi-phy-0";
 		cell-index = <0>;
@@ -505,7 +491,7 @@
 		};
 	};
 
-	mdss_dsi_phy1: qcom,mdss_dsi_phy1@ae96400 {
+	mdss_dsi_phy1: qcom,mdss_dsi_phy1@c996400 {
 		compatible = "qcom,dsi-phy-v3.0";
 		label = "dsi-phy-1";
 		cell-index = <1>;
@@ -558,6 +544,7 @@
 	sde_hdmi_tx: qcom,hdmi_tx_8998@c9a0000 {
 		cell-index = <0>;
 		compatible = "qcom,hdmi-tx-8998";
+		status = "disabled";
 		reg =	<0xc9a0000 0x50c>,
 			<0x780000 0x621c>,
 			<0xc9e0000 0x28>;

@@ -422,3 +422,5 @@ config DRM_PANEL_ORIENTATION_QUIRKS
 config DRM_LIB_RANDOM
 	bool
 	default n
+
+source "techpack/display/Kconfig"

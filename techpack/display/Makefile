@@ -25,11 +25,11 @@ ifeq ($(CONFIG_ARCH_BENGAL), y)
 LINUXINCLUDE    += -include $(srctree)/techpack/display/config/bengaldispconf.h
 endif
 
-ifeq ($(CONFIG_DRM_SDE_TECHPACK), y)
+ifeq ($(CONFIG_ARCH_MSM8998)$(CONFIG_DRM), yy)
 include $(srctree)/techpack/display/config/msm8998disp.conf
 endif
 
-ifeq ($(CONFIG_DRM_SDE_TECHPACK), y)
+ifeq ($(CONFIG_ARCH_MSM8998)$(CONFIG_DRM), yy)
 LINUXINCLUDE    += -include $(srctree)/techpack/display/config/msm8998dispconf.h
 endif
 

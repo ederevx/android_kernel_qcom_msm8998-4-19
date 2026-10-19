@@ -472,6 +472,10 @@ export KBUILD_AFLAGS_MODULE KBUILD_CFLAGS_MODULE KBUILD_LDFLAGS_MODULE
 export KBUILD_AFLAGS_KERNEL KBUILD_CFLAGS_KERNEL
 export KBUILD_ARFLAGS
 
+# KernelSU: select the driver Kconfig source (real only when building with -k)
+KSU_SRC := $(if $(filter 1,$(KSU_DEFINED)),drivers/kernelsu/Kconfig,drivers/Kconfig.ksu.dummy)
+export KSU_SRC
+
 # When compiling out-of-tree modules, put MODVERDIR in the module
 # tree rather than in the kernel tree. The kernel tree might
 # even be read-only.

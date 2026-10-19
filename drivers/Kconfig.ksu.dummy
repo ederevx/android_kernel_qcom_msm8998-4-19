@@ -1,0 +1,25 @@
+menu "KernelSU dummy configs"
+
+# The real KernelSU options are defined only when the driver Kconfig is
+# sourced (a build with -k). These stand-ins keep the defconfig entries
+# recognized so Kconfig does not drop them as unknown symbols.
+
+config KSU_DEBUG
+	bool
+
+config KSU_ALLOWLIST_WORKAROUND
+	bool
+
+config KSU_MANUAL_HOOK
+	bool
+
+config KSU_KPROBES_HOOK
+	bool
+
+config KSU_SYSCALL_TABLE_HOOK
+	bool
+
+config KSU_SUSFS
+	bool
+
+endmenu

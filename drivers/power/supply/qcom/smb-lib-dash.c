@@ -53,12 +53,10 @@ int smblib_set_prop_chg_voltage(struct smb_charger *chg, const union power_suppl
 int smblib_set_prop_batt_temp(struct smb_charger *chg, const union power_supply_propval *val);
 int smblib_set_prop_chg_protect_status(struct smb_charger *chg, const union power_supply_propval *val);
 int smblib_set_prop_charge_parameter_set(struct smb_charger *chg);
-int smblib_get_prop_batt_charge_counter(struct smb_charger *chg, union power_supply_propval *val);
 static inline void op_dump_reg(struct smb_charger *chip, u16 addr_start, u16 addr_end);
 void op_dump_regs(struct smb_charger *chip);
 void op_handle_usb_plugin(struct smb_charger *chg);
 int op_rerun_apsd(struct smb_charger *chg);
-irqreturn_t smblib_handle_aicl_done(int irq, void *data);
 int op_get_aicl_result(struct smb_charger *chg);
 static int get_property_from_fg(struct smb_charger *chg, enum power_supply_property prop, int *val);
 int set_property_on_fg(struct smb_charger *chg, enum power_supply_property prop, int val);
@@ -223,19 +221,6 @@ int smblib_set_prop_charge_parameter_set(struct smb_charger *chg)
 	return 0;
 }
 
-int smblib_get_prop_batt_charge_counter(struct smb_charger *chg,
-				     union power_supply_propval *val)
-{
-	int rc;
-
-	if (!chg->bms_psy)
-		return -EINVAL;
-
-	rc = power_supply_get_property(chg->bms_psy,
-				       POWER_SUPPLY_PROP_CHARGE_COUNTER, val);
-	return rc;
-}
-
 static inline void op_dump_reg(struct smb_charger *chip,
 	u16 addr_start, u16 addr_end)
 {
@@ -294,23 +279,6 @@ int op_rerun_apsd(struct smb_charger *chg)
 			return rc;
 		}
 	return 0;
-}
-
-irqreturn_t smblib_handle_aicl_done(int irq, void *data)
-{
-	struct smb_irq_data *irq_data = data;
-	struct smb_charger *chg = irq_data->parent_data;
-	int icl_ma, rc;
-
-	rc = smblib_get_charge_param(chg,
-		&chg->param.icl_stat, &icl_ma);
-	if (rc < 0) {
-		pr_err("Couldn't get ICL status rc=%d\n", rc);
-		return IRQ_HANDLED;
-	}
-
-	pr_info("IRQ: %s AICL result=%d\n", irq_data->name, icl_ma);
-	return IRQ_HANDLED;
 }
 
 int op_get_aicl_result(struct smb_charger *chg)

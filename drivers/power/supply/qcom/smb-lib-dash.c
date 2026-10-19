@@ -468,7 +468,6 @@ void op_handle_usb_removal(struct smb_charger *chg)
 	chg->usb_enum_status = false;
 	chg->non_std_chg_present = false;
 	chg->usb_type_redet_done = false;
-	chg->boot_usb_present = false;
 	chg->non_stand_chg_current = 0;
 	chg->non_stand_chg_count = 0;
 	chg->redet_count = 0;
@@ -820,8 +819,6 @@ static void op_dash_enable_role_switch(struct smb_charger *chg)
 
 static void set_usb_switch(struct smb_charger *chg, bool enable)
 {
-	int retrger_time;
-
 	if (!fast_charger) {
 		pr_err("no fast_charger register found\n");
 		return;
@@ -829,25 +826,14 @@ static void set_usb_switch(struct smb_charger *chg, bool enable)
 
 	if (enable) {
 		pr_err("switch on fastchg\n");
-		if (chg->boot_usb_present && chg->re_trigr_dash_done) {
-			vote(chg->usb_icl_votable, AICL_RERUN_VOTER,
-					true, 0);
-			usleep_range(500000, 510000);
-			vote(chg->usb_icl_votable, AICL_RERUN_VOTER,
-					true, DEFAULT_DCP_MA*1000);
-		}
 		set_mcu_en_gpio_value(1);
 		usleep_range(10000, 10002);
 		usb_sw_gpio_set(1);
 		usleep_range(10000, 10002);
 		mcu_en_gpio_set(0);
-		if (chg->boot_usb_present)
-			retrger_time = TIME_3S;
-		else
-			retrger_time = TIME_200MS;
 		if (!chg->re_trigr_dash_done)
 			schedule_delayed_work(&chg->rechk_sw_dsh_work,
-					msecs_to_jiffies(retrger_time));
+					msecs_to_jiffies(TIME_200MS));
 	} else {
 		pr_err("switch off fastchg\n");
 		usb_sw_gpio_set(0);

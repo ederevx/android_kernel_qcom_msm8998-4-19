@@ -514,7 +514,6 @@ struct smb_charger {
 	bool			op_apsd_done;
 	bool			re_trigr_dash_done;
 	bool			dash_handshake_failed;
-	bool			boot_usb_present;
 	bool			is_aging_test;
 
 	enum temp_region_type	mBattTempRegion;

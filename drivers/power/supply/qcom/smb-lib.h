@@ -484,7 +484,6 @@ struct smb_charger {
 	int			ibatmax[TEMP_REGION_MAX];
 	int			vbatmax[TEMP_REGION_MAX];
 	int			vbatdet[TEMP_REGION_MAX];
-	int			fake_chgvol;
 	int			fake_temp;
 	int			fake_protect_sts;
 	int			non_stand_chg_current;
@@ -496,7 +495,6 @@ struct smb_charger {
 	int			ck_dash_count;
 	int			recovery_boost_count;
 
-	bool			use_fake_chgvol;
 	bool			use_fake_temp;
 	bool			use_fake_protect_sts;
 	bool			vbus_present;
@@ -508,7 +506,6 @@ struct smb_charger {
 	bool			usb_type_redet_done;
 	bool			time_out;
 	bool			disable_normal_chg_for_dash;
-	bool			ship_mode;
 	bool			dash_on;
 	bool			chg_ovp;
 	bool			is_power_changed;

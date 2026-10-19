@@ -188,8 +188,6 @@ enable_icl_changed_interrupt:
 int smblib_set_prop_chg_voltage(struct smb_charger *chg,
 				const union power_supply_propval *val)
 {
-	chg->fake_chgvol = val->intval;
-	chg->use_fake_chgvol = true;
 	power_supply_changed(chg->batt_psy);
 
 	return 0;

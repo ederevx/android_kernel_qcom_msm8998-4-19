@@ -498,7 +498,6 @@ struct smb_charger {
 	bool			use_fake_temp;
 	bool			use_fake_protect_sts;
 	bool			vbus_present;
-	bool			hvdcp_present;
 	bool			dash_present;
 	bool			charger_collpse;
 	bool			usb_enum_status;
@@ -520,7 +519,6 @@ struct smb_charger {
 	bool			dash_handshake_failed;
 	bool			boot_usb_present;
 	bool			is_aging_test;
-	bool			revert_boost_trigger;
 
 	enum temp_region_type	mBattTempRegion;
 	enum batt_status_type	battery_status;

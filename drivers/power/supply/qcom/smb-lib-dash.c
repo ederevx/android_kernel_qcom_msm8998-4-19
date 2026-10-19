@@ -85,7 +85,6 @@ enum temp_region_type op_battery_temp_region_get(struct smb_charger *chg);
 int fuelgauge_battery_temp_region_get(void);
 static void op_battery_status_set(struct smb_charger *chg, enum batt_status_type battery_status);
 static void op_battery_temp_region_set(struct smb_charger *chg, enum temp_region_type batt_temp_region);
-static void set_prop_batt_health(struct smb_charger *chg, int batt_health);
 static void set_usb_switch(struct smb_charger *chg, bool enable);
 static int op_dash_disable_role_switch(struct smb_charger *chg, bool disable);
 static void op_dash_enable_role_switch(struct smb_charger *chg);
@@ -768,11 +767,6 @@ static void op_battery_temp_region_set(struct smb_charger *chg,
 	pr_err("set temp_region=%d\n", chg->mBattTempRegion);
 }
 
-static void set_prop_batt_health(struct smb_charger *chg, int batt_health)
-{
-	chg->batt_health = batt_health;
-}
-
 static int op_dash_disable_role_switch(struct smb_charger *chg, bool disable)
 {
 	int rc;
@@ -1334,7 +1328,6 @@ static int handle_batt_temp_cold(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_COLD);
 	}
 
 	return 0;
@@ -1371,7 +1364,6 @@ static int handle_batt_temp_little_cold(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1408,7 +1400,6 @@ static int handle_batt_temp_cool(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1453,7 +1444,6 @@ static int handle_batt_temp_little_cool(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1490,7 +1480,6 @@ static int handle_batt_temp_prenormal(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4 + BATT_TEMP_HYST;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1527,7 +1516,6 @@ static int handle_batt_temp_normal(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1564,7 +1552,6 @@ static int handle_batt_temp_warm(struct smb_charger *chg)
 		chg->mBattTempBoundT4 = chg->BATT_TEMP_T4;
 		chg->mBattTempBoundT5 = chg->BATT_TEMP_T5 - BATT_TEMP_HYST;
 		chg->mBattTempBoundT6 = chg->BATT_TEMP_T6;
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 	}
 
 	return 0;
@@ -1592,7 +1579,6 @@ static int handle_batt_temp_hot(struct smb_charger *chg)
 		chg->mBattTempBoundT6 =
 			chg->BATT_TEMP_T6 - BATT_TEMP_HYST;
 		/* from hot to warm */
-		set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_OVERHEAT);
 	}
 
 	return 0;
@@ -1660,7 +1646,6 @@ void op_charge_info_init(struct smb_charger *chg)
 static int op_handle_battery_uovp(struct smb_charger *chg)
 {
 	pr_err("vbat is over voltage, stop charging\n");
-	set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_OVERVOLTAGE);
 	op_charging_en(chg, false);
 
 	return 0;
@@ -1671,7 +1656,6 @@ static int op_handle_battery_restore_from_uovp(struct smb_charger *chg)
 	pr_err("vbat is back to normal, start charging\n");
 	/* restore charging form battery ovp */
 	op_charging_en(chg, true);
-	set_prop_batt_health(chg, POWER_SUPPLY_HEALTH_GOOD);
 
 	return 0;
 }

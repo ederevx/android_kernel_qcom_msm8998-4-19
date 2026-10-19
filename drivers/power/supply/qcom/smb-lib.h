@@ -478,7 +478,6 @@ struct smb_charger {
 	int			BATT_TEMP_T4;
 	int			BATT_TEMP_T5;
 	int			BATT_TEMP_T6;
-	int			batt_health;
 	int			ibatmax[TEMP_REGION_MAX];
 	int			vbatmax[TEMP_REGION_MAX];
 	int			vbatdet[TEMP_REGION_MAX];

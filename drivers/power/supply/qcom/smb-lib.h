@@ -51,8 +51,6 @@ enum print_reason {
 
 #ifdef CONFIG_ARCH_ONEPLUS_MSM8998
 /* DASH fast-charge state machine */
-#define BATT_TYPE_FCC_VOTER		"BATT_TYPE_FCC_VOTER"
-#define PSY_ICL_VOTER			"PSY_ICL_VOTER"
 #define TEMP_REGION_MAX			9
 #define NON_STANDARD_CHARGER_CHECK_S	90
 #define TIME_1000MS			1000

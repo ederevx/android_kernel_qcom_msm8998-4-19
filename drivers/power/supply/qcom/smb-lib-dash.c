@@ -470,7 +470,6 @@ void op_handle_usb_removal(struct smb_charger *chg)
 	chg->non_std_chg_present = false;
 	chg->usb_type_redet_done = false;
 	chg->boot_usb_present = false;
-	chg->revert_boost_trigger = false;
 	chg->non_stand_chg_current = 0;
 	chg->non_stand_chg_count = 0;
 	chg->redet_count = 0;
@@ -1050,7 +1049,6 @@ static void op_recovery_usb_suspend_work(struct work_struct *work)
 					true, (effect_result - USBIN_150MA));
 		}
 		msleep(1000);
-		chg->revert_boost_trigger = false;
 	} else {
 		chg->recovery_boost_count++;
 		schedule_delayed_work(&chg->recovery_suspend_work,
@@ -1276,8 +1274,6 @@ int get_prop_batt_status(struct smb_charger *chg)
 	} else if (chg->dash_on) {
 		return POWER_SUPPLY_STATUS_CHARGING;
 	}
-	if (chg->revert_boost_trigger && chg->vbus_present)
-		return POWER_SUPPLY_STATUS_CHARGING;
 
 	rc = smblib_get_prop_batt_status(chg, &pval);
 	if (rc)
@@ -2347,18 +2343,7 @@ int get_prop_chg_protect_status(struct smb_charger *chg)
 
 bool get_prop_fastchg_status(struct smb_charger *chg)
 {
-	int capacity;
-
-	if (chg->dash_present)
-		return true;
-
-	if (chg->hvdcp_present) {
-		capacity = get_prop_batt_capacity(chg);
-		if (capacity >= 1 && capacity <= 85)
-			return true;
-	}
-
-	return false;
+	return chg->dash_present;
 }
 
 void fastcharge_information_register(struct external_battery_gauge *fast_chg)

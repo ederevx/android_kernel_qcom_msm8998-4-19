@@ -3617,6 +3617,7 @@ struct ipahal_diag_tag {
 	u8 kind;
 	u8 ip;
 	u8 hashed;
+	u8 source;
 };
 
 static struct ipahal_diag_tag ipahal_diag_tags[IPA_DIAG_TAG_MAX];
@@ -3651,7 +3652,8 @@ dma_addr_t ipahal_diag_tag_addr(u32 idx)
  * Read-only registry probe for the fault path: the writer publishes an entry
  * before releasing the count, so an acquisition load never sees a partial one.
  */
-int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size)
+int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size,
+	u8 *source)
 {
 	u32 i, n = ipahal_diag_tag_count();
 	u64 sz = ipahal_get_empty_fltrt_size();
@@ -3663,6 +3665,7 @@ int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size)
 			*idx = i;
 			*base = (u64)t->dma;
 			*size = sz;
+			*source = t->source;
 			return 1;
 		}
 	}
@@ -3670,16 +3673,17 @@ int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size)
 	return 0;
 }
 
-static struct ipahal_diag_tag *ipahal_diag_tag_find(u8 kind, u8 ip,
-	u8 hashed, s32 pipe, u32 slot)
+static struct ipahal_diag_tag *ipahal_diag_tag_find(u8 source, u8 kind,
+	u8 ip, u8 hashed, s32 pipe, u32 slot)
 {
 	u32 i;
 
 	for (i = 0; i < ipahal_diag_tags_used; i++) {
 		struct ipahal_diag_tag *t = &ipahal_diag_tags[i];
 
-		if (t->kind == kind && t->ip == ip && t->hashed == hashed &&
-		    t->pipe == pipe && t->slot == slot)
+		if (t->source == source && t->kind == kind && t->ip == ip &&
+		    t->hashed == hashed && t->pipe == pipe &&
+		    t->slot == slot)
 			return t;
 	}
 
@@ -3691,15 +3695,15 @@ static struct ipahal_diag_tag *ipahal_diag_tag_find(u8 kind, u8 ip,
  * Returns NULL when no clone can be provided: the caller then leaves the whole
  * image untagged and the run is reported invalid.
  */
-static struct ipahal_diag_tag *ipahal_diag_tag_get(u8 kind, u8 ip,
-	u8 hashed, s32 pipe, u32 slot)
+static struct ipahal_diag_tag *ipahal_diag_tag_get(u8 source, u8 kind,
+	u8 ip, u8 hashed, s32 pipe, u32 slot)
 {
 	struct ipahal_diag_tag *t;
 	size_t size = ipahal_ctx->empty_fltrt_tbl.size;
 	dma_addr_t dma;
 	void *cpu;
 
-	t = ipahal_diag_tag_find(kind, ip, hashed, pipe, slot);
+	t = ipahal_diag_tag_find(source, kind, ip, hashed, pipe, slot);
 	if (t)
 		return t;
 
@@ -3724,9 +3728,71 @@ static struct ipahal_diag_tag *ipahal_diag_tag_get(u8 kind, u8 ip,
 	t->hashed = hashed;
 	t->pipe = pipe;
 	t->slot = slot;
+	t->source = source;
 	smp_store_release(&ipahal_diag_tags_used, ipahal_diag_tags_used + 1);
 
 	return t;
+}
+
+/* Init-image clones share the pool but carry a distinct source key. */
+static struct ipahal_diag_tag *ipahal_diag_init_clone(u8 kind, u8 ip,
+	u8 hash, u32 slot, u32 *tag_id)
+{
+	struct ipahal_diag_tag *t;
+
+	mutex_lock(&ipahal_diag_tags_lock);
+	t = ipahal_diag_tag_get(IPA_DIAG_SRC_INIT, kind, ip, hash, -1, slot);
+	if (t)
+		*tag_id = (u32)(t - ipahal_diag_tags);
+	mutex_unlock(&ipahal_diag_tags_lock);
+
+	return t;
+}
+
+/*
+ * Substitute one init-image entry with a clone, re-decode the written word and
+ * keep the evidence. Returns false when the entry must stay the empty value;
+ * the caller then writes the original word as before.
+ */
+static bool ipahal_diag_init_subst(struct ipahal_fltrt_obj *obj, u8 kind,
+	u8 ip, u8 hash, u32 slot, u32 image_off, u32 local_off, u64 before,
+	u8 *hdr, int *ret)
+{
+	struct ipahal_diag_tag *t;
+	u64 after, addr;
+	u32 tag_id = 0;
+	bool is_sys;
+
+	t = ipahal_diag_init_clone(kind, ip, hash, slot, &tag_id);
+	if (!t) {
+		*ret = -ENOMEM;
+		pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+			kind, ip, slot, *ret);
+		return false;
+	}
+
+	after = obj->create_tbl_addr(true, t->dma);
+	obj->write_val_to_hdr(after, hdr);
+	if (obj->parse_tbl_addr) {
+		obj->parse_tbl_addr(*(u64 *)hdr, &addr, &is_sys);
+		if (!is_sys || addr != (u64)t->dma) {
+			ipa_diag_mark_invalid("init_tag_readback");
+			*ret = -EIO;
+			pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+				kind, ip, slot, *ret);
+			return false;
+		}
+	} else if (after != *(u64 *)hdr) {
+		ipa_diag_mark_invalid("init_tag_readback");
+		*ret = -EIO;
+		pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+			kind, ip, slot, *ret);
+		return false;
+	}
+
+	ipa_diag_init_record(kind, ip, hash, image_off, local_off, slot,
+		before, *(u64 *)hdr, tag_id);
+	return true;
 }
 
 /*
@@ -3777,8 +3843,8 @@ int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
 		if (!is_sys || addr != empty)
 			continue;
 
-		if (!ipahal_diag_tag_get(kind, ip, hashed, pipe,
-					first_slot + i)) {
+		if (!ipahal_diag_tag_get(IPA_DIAG_SRC_COMMIT, kind, ip,
+					hashed, pipe, first_slot + i)) {
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -3795,8 +3861,8 @@ int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
 		if (!is_sys || addr != empty)
 			continue;
 
-		t = ipahal_diag_tag_find(kind, ip, hashed, pipe,
-					first_slot + i);
+		t = ipahal_diag_tag_find(IPA_DIAG_SRC_COMMIT, kind, ip,
+					hashed, pipe, first_slot + i);
 		if (!t || (t->dma & obj->sysaddr_alignment)) {
 			ipa_diag_mark_invalid("tag_unencodable");
 			ret = -EINVAL;
@@ -3947,7 +4013,11 @@ int ipahal_rt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 	u32 nhash_hdr_size, struct ipa_mem_buffer *mem, bool atomic)
 {
 	int i;
+	int dret = 0;
 	u64 addr;
+	u8 ik = 0, ii = 0, ih = 0;
+	u32 idest = 0;
+	bool init;
 	struct ipahal_fltrt_obj *obj;
 	int flag;
 
@@ -3955,6 +4025,7 @@ int ipahal_rt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 
 	flag = atomic ? GFP_ATOMIC : GFP_KERNEL;
 	obj = &ipahal_fltrt_objs[ipahal_ctx->hw_type];
+	init = !atomic && ipa_diag_init_take(&ik, &ii, &ih, &idest);
 
 	if (!tbls_num || !nhash_hdr_size || !mem) {
 		IPAHAL_ERR("Input Error: tbls_num=%d nhash_hdr_sz=%d mem=%pK\n",
@@ -3988,9 +4059,15 @@ int ipahal_rt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 
 	addr = obj->create_tbl_addr(true,
 		ipahal_ctx->empty_fltrt_tbl.phys_base);
-	for (i = 0; i < tbls_num; i++)
-		obj->write_val_to_hdr(addr,
-			mem->base + i * obj->tbl_hdr_width);
+	for (i = 0; i < tbls_num; i++) {
+		u8 *hdr = mem->base + i * obj->tbl_hdr_width;
+
+		if (init && ipahal_diag_init_subst(obj, ik, ii, ih, i,
+			i * obj->tbl_hdr_width,
+			idest + i * obj->tbl_hdr_width, addr, hdr, &dret))
+			continue;
+		obj->write_val_to_hdr(addr, hdr);
+	}
 
 	return 0;
 }
@@ -4015,7 +4092,11 @@ int ipahal_flt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 	int flt_spc;
 	u64 flt_bitmap;
 	int i;
+	int dret = 0;
 	u64 addr;
+	u8 ik = 0, ii = 0, ih = 0;
+	u32 idest = 0;
+	bool init;
 	struct ipahal_fltrt_obj *obj;
 	int flag;
 
@@ -4023,6 +4104,7 @@ int ipahal_flt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 
 	flag = atomic ? GFP_ATOMIC : GFP_KERNEL;
 	obj = &ipahal_fltrt_objs[ipahal_ctx->hw_type];
+	init = !atomic && ipa_diag_init_take(&ik, &ii, &ih, &idest);
 
 	if (!tbls_num || !nhash_hdr_size || !mem) {
 		IPAHAL_ERR("Input Error: tbls_num=%d nhash_hdr_sz=%d mem=%pK\n",
@@ -4078,13 +4160,27 @@ int ipahal_flt_generate_empty_img(u32 tbls_num, u32 hash_hdr_size,
 		ipahal_ctx->empty_fltrt_tbl.phys_base);
 
 	if (ep_bitmap) {
-		for (i = 1; i <= tbls_num; i++)
-			obj->write_val_to_hdr(addr,
-				mem->base + i * obj->tbl_hdr_width);
+		for (i = 1; i <= tbls_num; i++) {
+			u8 *hdr = mem->base + i * obj->tbl_hdr_width;
+
+			if (init && ipahal_diag_init_subst(obj, ik, ii, ih, i,
+				i * obj->tbl_hdr_width,
+				idest + i * obj->tbl_hdr_width, addr, hdr,
+				&dret))
+				continue;
+			obj->write_val_to_hdr(addr, hdr);
+		}
 	} else {
-		for (i = 0; i < tbls_num; i++)
-			obj->write_val_to_hdr(addr,
-				mem->base + i * obj->tbl_hdr_width);
+		for (i = 0; i < tbls_num; i++) {
+			u8 *hdr = mem->base + i * obj->tbl_hdr_width;
+
+			if (init && ipahal_diag_init_subst(obj, ik, ii, ih, i,
+				i * obj->tbl_hdr_width,
+				idest + i * obj->tbl_hdr_width, addr, hdr,
+				&dret))
+				continue;
+			obj->write_val_to_hdr(addr, hdr);
+		}
 	}
 
 	return 0;

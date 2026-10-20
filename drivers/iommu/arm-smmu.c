@@ -2077,20 +2077,20 @@ void arm_smmu_iova_walk_domain(struct iommu_domain *domain, unsigned long iova,
 	hwcb = smmu_domain->smmu->cbs ?
 		&smmu_domain->smmu->cbs[smmu_domain->cfg.cbndx] : NULL;
 	if (!smmu_domain->pgtbl_ops) {
-		pr_err("IPA13 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=no-pgtbl\n",
+		pr_err("IPA14 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=no-pgtbl\n",
 			stage, cb, (void *)domain, iova);
 		return;
 	}
 
 	ret = av8l_fast_iova_walk_public(smmu_domain->pgtbl_ops, iova, &walk);
 	if (ret) {
-		pr_err("IPA13 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=%d\n",
+		pr_err("IPA14 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=%d\n",
 			stage, cb, (void *)domain, iova, ret);
 		return;
 	}
 
 	for (i = 0; i < walk.n; i++)
-		pr_err("IPA13 WALK stage=%u cb=%u domain=%px iova=%#lx ttbr0=%016llx ttbr1=%016llx tcr=%#x level=%u table_pa=%#llx index=%u desc=%016llx terminal=%u\n",
+		pr_err("IPA14 WALK stage=%u cb=%u domain=%px iova=%#lx ttbr0=%016llx ttbr1=%016llx tcr=%#x level=%u table_pa=%#llx index=%u desc=%016llx terminal=%u\n",
 			stage, cb, (void *)domain, iova,
 			hwcb ? hwcb->ttbr[0] : 0, hwcb ? hwcb->ttbr[1] : 0,
 			hwcb ? hwcb->tcr[0] : 0,
@@ -2141,10 +2141,10 @@ static void arm_smmu_ipa_requester(struct arm_smmu_device *smmu, u8 cbndx,
 	*smr_idx = idx;
 	s2cr = (idx >= 0 && smmu->s2crs) ? &smmu->s2crs[idx] : NULL;
 
-	pr_err("IPA13 REQUESTER smmu=%s cb=%u sid_raw=%#x sid_mask=%#x fsr=%#x fsynr0=%#x fsynr1=%#x cbfrsynra=%#x\n",
+	pr_err("IPA14 REQUESTER smmu=%s cb=%u sid_raw=%#x sid_mask=%#x fsr=%#x fsynr0=%#x fsynr1=%#x cbfrsynra=%#x\n",
 		dev_name(smmu->dev), cbndx, sid, *sid_mask, fsr, fsynr0,
 		fsynr1, cbfrsynra);
-	pr_err("IPA13 REQUESTER_DECODED cb=%u smr=%d tf=%u pf=%u ef=%u ss=%u wnr=%u pnu=%u ind=%u bid=%#x pid=%#x mid=%#x s2cr_type=%u s2cr_cb=%d\n",
+	pr_err("IPA14 REQUESTER_DECODED cb=%u smr=%d tf=%u pf=%u ef=%u ss=%u wnr=%u pnu=%u ind=%u bid=%#x pid=%#x mid=%#x s2cr_type=%u s2cr_cb=%d\n",
 		cbndx, idx, !!(fsr & FSR_TF), !!(fsr & FSR_PF),
 		!!(fsr & FSR_EF), !!(fsr & FSR_SS), !!(fsynr0 & FSYNR0_WNR),
 		!!(fsynr0 & FSYNR0_PNU), !!(fsynr0 & FSYNR0_IND),
@@ -2154,7 +2154,7 @@ static void arm_smmu_ipa_requester(struct arm_smmu_device *smmu, u8 cbndx,
 }
 
 /*
- * IPA13 STREAM: the configured match/route pair of the IPA UC device, taken
+ * IPA14 STREAM: the configured match/route pair of the IPA UC device, taken
  * once per attach from the driver's stream map before the WDI enable path runs.
  */
 static void arm_smmu_ipa_stream(struct device *dev,
@@ -2181,7 +2181,7 @@ static void arm_smmu_ipa_stream(struct device *dev,
 			s2cr_cb = smmu->s2crs[idx].cbndx;
 		}
 
-		pr_err("IPA13 STREAM smmu=%s index=%d match_raw=%#x route_raw=%#x decoded_sid=%#x decoded_mask=%#x cb=%u dev=%s\n",
+		pr_err("IPA14 STREAM smmu=%s index=%d match_raw=%#x route_raw=%#x decoded_sid=%#x decoded_mask=%#x cb=%u dev=%s\n",
 			dev_name(smmu->dev), idx, match_raw, route_raw, sid,
 			mask, s2cr_cb, dev_name(dev));
 	}

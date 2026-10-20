@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Round-13 IPA uC SMMU diagnostic ring.
+ * Round-14 IPA uC SMMU diagnostic ring.
  *
  * Records live in a static, versioned buffer recovered from the crash dump and
  * decoded against the exact vmlinux that produced the capture (symbol
- * ipa_diag); the printed checkpoints keep the literal IPA13 schemas.
+ * ipa_diag); the printed checkpoints keep the literal IPA14 schemas. Round 13
+ * records (ALLOC, TAG, PUB, ENABLE, FAULT, MATCH) and their fields are kept.
  */
 
 #ifndef _IPA_DIAG_H_
@@ -13,12 +14,16 @@
 #include <linux/dma-mapping.h>
 #include <linux/types.h>
 
-#define IPA_DIAG_MAGIC		0x49504131334459ULL	/* "IPA13DY" */
-#define IPA_DIAG_VERSION	3u
+#define IPA_DIAG_MAGIC		0x49504131344459ULL	/* "IPA14DY" */
+#define IPA_DIAG_VERSION	4u
 #define IPA_DIAG_CAPACITY	2048u
 #define IPA_DIAG_BUILD_LEN	64
 /* One clone per published header slot; see ipahal_diag_tag_img(). */
 #define IPA_DIAG_TAG_MAX	256
+
+/* Clone pool provenance. */
+#define IPA_DIAG_SRC_COMMIT	0u
+#define IPA_DIAG_SRC_INIT	1u
 
 /*
  * Translation coverage of the tag clones from the uC context is not asserted:
@@ -33,6 +38,8 @@ enum ipa_diag_stage {
 	IPA_DIAG_ENABLE,
 	IPA_DIAG_FAULT,
 	IPA_DIAG_MATCH,
+	IPA_DIAG_INIT,
+	IPA_DIAG_INITPUB,
 };
 
 enum ipa_diag_kind {
@@ -49,15 +56,19 @@ enum ipa_diag_phase {
 	IPA_DIAG_PHASE_COMMAND_RETURN,
 };
 
-/* FAR classification against the immutable clone registry. */
+/* FAR classification. Commit and init clones are separate registries. */
 enum ipa_diag_match_kind {
 	IPA_DIAG_MATCH_ORIGINAL = 0,	/* original empty-table range */
-	IPA_DIAG_MATCH_TAG,		/* clone registry entry */
-	IPA_DIAG_MATCH_NEITHER,
+	IPA_DIAG_MATCH_COMMIT = 1,	/* commit-image clone */
+	IPA_DIAG_MATCH_INIT = 2,	/* init-image clone */
+	IPA_DIAG_MATCH_NEITHER = 3,
 };
 
 #define IPA_DIAG_MATCH_OBJECT	0x1	/* FAR inside the requested object */
 #define IPA_DIAG_MATCH_GRANULE	0x2	/* FAR only inside its backing page */
+
+/* hash field of an init image: the boot command copies it to both regions. */
+#define IPA_DIAG_INIT_BOTH	2u
 
 /*
  * 96 bytes, no implicit padding: 6*u64 + 10*u32 + 8*u8.
@@ -131,5 +142,12 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 void ipa_diag_freeze(void);
 bool ipa_diag_is_invalid(void);
 void ipa_diag_mark_invalid(const char *why);
+
+/* Init-image instrumentation: context set by the boot init callers. */
+void ipa_diag_init_set(u8 kind, u8 ip, u8 hash, u32 dest);
+bool ipa_diag_init_take(u8 *kind, u8 *ip, u8 *hash, u32 *dest);
+void ipa_diag_init_record(u8 kind, u8 ip, u8 hash, u32 image_off,
+	u32 local_off, u32 slot, u64 before, u64 after, u32 tag_id);
+void ipa_diag_initpub(u8 kind, u8 ip, u32 dst, u32 len, int ret, bool done);
 
 #endif /* _IPA_DIAG_H_ */

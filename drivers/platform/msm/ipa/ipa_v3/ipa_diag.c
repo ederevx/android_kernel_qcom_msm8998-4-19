@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Round-13 IPA uC SMMU diagnostic: the static record ring, the memory-only
- * enable checkpoints, and the fault-time classification against the clone
- * registry.
+ * Round-14 IPA uC SMMU diagnostic: the static record ring, the memory-only
+ * enable checkpoints, init-image clone substitution, and the fault-time
+ * classification against both clone registries.
  */
 
 #include <linux/atomic.h>
@@ -22,7 +22,7 @@ struct ipa_diag_buf ipa_diag = {
 	.capacity = IPA_DIAG_CAPACITY,
 	.bufsize = sizeof(struct ipa_diag_rec),
 	.tags_cov = IPA_DIAG_COV_UNKNOWN,
-	.build = "r13 " UTS_RELEASE,
+	.build = "r14 " UTS_RELEASE,
 };
 
 static atomic_t ipa_diag_cursor = ATOMIC_INIT(0);
@@ -33,6 +33,39 @@ static atomic64_t ipa_diag_rt_last = ATOMIC64_INIT(0);
 static atomic64_t ipa_diag_flt_last = ATOMIC64_INIT(0);
 
 static atomic_t ipa_diag_match_once = ATOMIC_INIT(0);
+
+struct ipa_diag_init_ctx {
+	u8 valid;
+	u8 kind;
+	u8 ip;
+	u8 hash;
+	u32 dest;
+};
+
+static struct ipa_diag_init_ctx ipa_diag_init_ctx;
+
+void ipa_diag_init_set(u8 kind, u8 ip, u8 hash, u32 dest)
+{
+	ipa_diag_init_ctx.kind = kind;
+	ipa_diag_init_ctx.ip = ip;
+	ipa_diag_init_ctx.hash = hash;
+	ipa_diag_init_ctx.dest = dest;
+	WRITE_ONCE(ipa_diag_init_ctx.valid, 1);
+}
+
+bool ipa_diag_init_take(u8 *kind, u8 *ip, u8 *hash, u32 *dest)
+{
+	if (!READ_ONCE(ipa_diag_init_ctx.valid))
+		return false;
+
+	*kind = ipa_diag_init_ctx.kind;
+	*ip = ipa_diag_init_ctx.ip;
+	*hash = ipa_diag_init_ctx.hash;
+	*dest = ipa_diag_init_ctx.dest;
+	WRITE_ONCE(ipa_diag_init_ctx.valid, 0);
+	return true;
+}
+
 static const char *ipa_diag_kind_name(u8 kind)
 {
 	return kind == IPA_DIAG_RT ? "rt" : "flt";
@@ -43,7 +76,7 @@ void ipa_diag_announce(void)
 	if (atomic_xchg(&ipa_diag_built, 1))
 		return;
 
-	pr_info("IPA13 BUF va=%px size=%zu capacity=%u cov=%u\n",
+	pr_info("IPA14 BUF va=%px size=%zu capacity=%u cov=%u\n",
 		(void *)&ipa_diag, sizeof(ipa_diag), IPA_DIAG_CAPACITY,
 		ipa_diag.tags_cov);
 }
@@ -64,7 +97,7 @@ void ipa_diag_mark_invalid(const char *why)
 	if (cmpxchg(&ipa_diag.invalid, 0u, 1u))
 		return;
 
-	pr_emerg("IPA13 INVALID reason=%s tags=%u\n", why,
+	pr_emerg("IPA14 INVALID reason=%s tags=%u\n", why,
 		ipahal_diag_tag_count());
 }
 
@@ -132,7 +165,7 @@ void ipa_diag_alloc(struct device *dev, struct iommu_domain *domain,
 		.a = (u32)size,
 	};
 
-	pr_info("IPA13 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
+	pr_info("IPA14 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
 		dev ? dev_name(dev) : "(null)", dev, domain, &dma, size, cpu);
 
 	ipa_diag_record(&r);
@@ -199,7 +232,7 @@ void ipa_diag_pub(u64 gen, enum ipa_diag_kind kind, u8 ip, bool hashed,
 	}
 
 	if (ret || ipa_diag_is_invalid())
-		pr_err("IPA13 PUBFAIL gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u invalid=%u\n",
+		pr_err("IPA14 PUBFAIL gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u invalid=%u\n",
 			gen, ipa_diag_kind_name(kind), ip, hashed ? 1 : 0,
 			&src, local_offset, length, slots, tagged, ret,
 			done ? 1 : 0, ipa_diag_is_invalid());
@@ -236,7 +269,7 @@ static void ipa_diag_enable_record(u64 seq, u32 pipe, u32 ready,
 	if (phase != IPA_DIAG_PHASE_CHECKPOINT_EXIT)
 		return;
 
-	pr_info("IPA13 ENABLE seq=%llu pipe=%u rt_gen=%llu flt_gen=%llu tags=%u slots=%u ready=%#x ns=%llu\n",
+	pr_info("IPA14 ENABLE seq=%llu pipe=%u rt_gen=%llu flt_gen=%llu tags=%u slots=%u ready=%#x ns=%llu\n",
 		seq, pipe, rt, flt, r.tag_alloc, r.tagged_slots, ready,
 		r.submitted_raw);
 }
@@ -272,19 +305,60 @@ static void ipa_diag_append_frozen(const struct ipa_diag_rec *src)
 	smp_store_release(&slot->seq, (u64)idx + 1);
 }
 
+void ipa_diag_init_record(u8 kind, u8 ip, u8 hash, u32 image_off,
+	u32 local_off, u32 slot, u64 before, u64 after, u32 tag_id)
+{
+	struct ipa_diag_rec r = {
+		.generation = (u64)tag_id,
+		.submitted_raw = before,
+		.clone_dma = after,
+		.image_byte_offset = image_off,
+		.local_byte_offset = local_off,
+		.slot = slot,
+		.pipe = -1,
+		.a = tag_id,
+		.stage = IPA_DIAG_INIT,
+		.kind = kind,
+		.ip = ip,
+		.hashed = hash,
+	};
+
+	ipa_diag_record(&r);
+}
+
+void ipa_diag_initpub(u8 kind, u8 ip, u32 dst, u32 len, int ret, bool done)
+{
+	struct ipa_diag_rec r = {
+		.image_dma = (u64)dst,
+		.length = len,
+		.pipe = -1,
+		.ret = ret,
+		.stage = IPA_DIAG_INITPUB,
+		.kind = kind,
+		.ip = ip,
+		.done = done ? 1 : 0,
+	};
+
+	pr_info("IPA14 INITPUB dst=%#x len=%u ret=%d done=%u\n",
+		dst, len, ret, done ? 1 : 0);
+	ipa_diag_record(&r);
+}
+
 void ipa_diag_match(u64 far)
 {
 	u64 base = (u64)ipahal_get_empty_fltrt_base();
 	u64 size = (u64)ipahal_get_empty_fltrt_size();
 	u64 tbase = 0, tsize = 0, last, off = 0;
 	u32 id = 0, kind = IPA_DIAG_MATCH_NEITHER, flags = 0;
+	u8 src = IPA_DIAG_SRC_COMMIT;
 	struct ipa_diag_rec r;
 
 	if (atomic_xchg(&ipa_diag_match_once, 1))
 		return;
 
-	if (ipahal_diag_tag_lookup(far, &id, &tbase, &tsize)) {
-		kind = IPA_DIAG_MATCH_TAG;
+	if (ipahal_diag_tag_lookup(far, &id, &tbase, &tsize, &src)) {
+		kind = (src == IPA_DIAG_SRC_INIT) ? IPA_DIAG_MATCH_INIT :
+			IPA_DIAG_MATCH_COMMIT;
 		base = tbase;
 		size = tsize;
 	} else if (far >= base && far < base + size) {
@@ -303,7 +377,7 @@ void ipa_diag_match(u64 far)
 	last = max_t(u64, atomic64_read(&ipa_diag_rt_last),
 		     atomic64_read(&ipa_diag_flt_last));
 
-	pr_emerg("IPA13 MATCH far=%#llx kind=%u tag_id=%u base=%#llx size=%#llx off=%#llx last_pub_gen=%llu\n",
+	pr_emerg("IPA14 MATCH far=%#llx kind=%u tag_id=%u base=%#llx size=%#llx off=%#llx last_pub_gen=%llu\n",
 		far, kind, id, base, size, off, last);
 
 	r = (struct ipa_diag_rec) {
@@ -315,7 +389,7 @@ void ipa_diag_match(u64 far)
 		.a = flags,
 		.b = id,
 		.stage = IPA_DIAG_MATCH,
-		.kind = IPA_DIAG_NONE,
+		.kind = kind,
 	};
 	ipa_diag_append_frozen(&r);
 }
@@ -352,7 +426,7 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 		.b = cbfrsynra,
 	};
 
-	pr_emerg("IPA13 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
+	pr_emerg("IPA14 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
 		cb, sid, far, fsr, fsynr0, ns, report_ret);
 
 	/* The fault and match records are the appends that survive the freeze. */
@@ -361,7 +435,7 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 	ipa_diag_match(far);
 
 	/* Whatever the handler already published stays checkable. */
-	pr_emerg("IPA13 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
+	pr_emerg("IPA14 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
 		sid_mask, fsynr1, cbfrsynra, (int)smr_idx,
 		ipahal_diag_tag_count(), ipa_diag_is_invalid(),
 		READ_ONCE(ipa_diag.overflow));

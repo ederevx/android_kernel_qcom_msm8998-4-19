@@ -54,6 +54,7 @@
 #define IPA_UC_SUBSYSTEM_NAME "ipa_uc"
 
 #include "ipa_i.h"
+#include "ipa_diag.h"
 #include "../ipa_rm_i.h"
 #include "ipahal/ipahal.h"
 #include "ipahal/ipahal_fltrt.h"
@@ -4227,6 +4228,9 @@ int _ipa_init_rt4_v3(void)
 		ipa3_ctx->rt_idx_bitmap[IPA_IP_v4] |= (1 << i);
 	IPADBG("v4 rt bitmap 0x%lx\n", ipa3_ctx->rt_idx_bitmap[IPA_IP_v4]);
 
+	ipa_diag_init_set(IPA_DIAG_RT, IPA_IP_v4, IPA_DIAG_INIT_BOTH,
+		ipa3_ctx->smem_restricted_bytes +
+		IPA_MEM_PART(v4_rt_hash_ofst));
 	rc = ipahal_rt_generate_empty_img(IPA_MEM_PART(v4_rt_num_index),
 		IPA_MEM_PART(v4_rt_hash_size), IPA_MEM_PART(v4_rt_nhash_size),
 		&mem, false);
@@ -4274,6 +4278,9 @@ int _ipa_init_rt4_v3(void)
 		rc = -EFAULT;
 	}
 
+	ipa_diag_initpub(IPA_DIAG_RT, IPA_IP_v4,
+		v4_cmd.hash_local_addr ? v4_cmd.hash_local_addr :
+		v4_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4301,6 +4308,9 @@ int _ipa_init_rt6_v3(void)
 		ipa3_ctx->rt_idx_bitmap[IPA_IP_v6] |= (1 << i);
 	IPADBG("v6 rt bitmap 0x%lx\n", ipa3_ctx->rt_idx_bitmap[IPA_IP_v6]);
 
+	ipa_diag_init_set(IPA_DIAG_RT, IPA_IP_v6, IPA_DIAG_INIT_BOTH,
+		ipa3_ctx->smem_restricted_bytes +
+		IPA_MEM_PART(v6_rt_hash_ofst));
 	rc = ipahal_rt_generate_empty_img(IPA_MEM_PART(v6_rt_num_index),
 		IPA_MEM_PART(v6_rt_hash_size), IPA_MEM_PART(v6_rt_nhash_size),
 		&mem, false);
@@ -4348,6 +4358,9 @@ int _ipa_init_rt6_v3(void)
 		rc = -EFAULT;
 	}
 
+	ipa_diag_initpub(IPA_DIAG_RT, IPA_IP_v6,
+		v6_cmd.hash_local_addr ? v6_cmd.hash_local_addr :
+		v6_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4368,6 +4381,9 @@ int _ipa_init_flt4_v3(void)
 	struct ipahal_imm_cmd_pyld *cmd_pyld;
 	int rc;
 
+	ipa_diag_init_set(IPA_DIAG_FLT, IPA_IP_v4, IPA_DIAG_INIT_BOTH,
+		ipa3_ctx->smem_restricted_bytes +
+		IPA_MEM_PART(v4_flt_hash_ofst));
 	rc = ipahal_flt_generate_empty_img(ipa3_ctx->ep_flt_num,
 		IPA_MEM_PART(v4_flt_hash_size),
 		IPA_MEM_PART(v4_flt_nhash_size), ipa3_ctx->ep_flt_bitmap,
@@ -4416,6 +4432,9 @@ int _ipa_init_flt4_v3(void)
 		rc = -EFAULT;
 	}
 
+	ipa_diag_initpub(IPA_DIAG_FLT, IPA_IP_v4,
+		v4_cmd.hash_local_addr ? v4_cmd.hash_local_addr :
+		v4_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4436,6 +4455,9 @@ int _ipa_init_flt6_v3(void)
 	struct ipahal_imm_cmd_pyld *cmd_pyld;
 	int rc;
 
+	ipa_diag_init_set(IPA_DIAG_FLT, IPA_IP_v6, IPA_DIAG_INIT_BOTH,
+		ipa3_ctx->smem_restricted_bytes +
+		IPA_MEM_PART(v6_flt_hash_ofst));
 	rc = ipahal_flt_generate_empty_img(ipa3_ctx->ep_flt_num,
 		IPA_MEM_PART(v6_flt_hash_size),
 		IPA_MEM_PART(v6_flt_nhash_size), ipa3_ctx->ep_flt_bitmap,
@@ -4485,6 +4507,9 @@ int _ipa_init_flt6_v3(void)
 		rc = -EFAULT;
 	}
 
+	ipa_diag_initpub(IPA_DIAG_FLT, IPA_IP_v6,
+		v6_cmd.hash_local_addr ? v6_cmd.hash_local_addr :
+		v6_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:

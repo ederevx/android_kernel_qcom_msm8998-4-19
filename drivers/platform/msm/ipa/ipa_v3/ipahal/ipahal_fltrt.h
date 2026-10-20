@@ -144,7 +144,8 @@ size_t ipahal_get_empty_fltrt_size(void);
 u32 ipahal_diag_tag_count(void);
 u32 ipahal_diag_tagged_count(void);
 dma_addr_t ipahal_diag_tag_addr(u32 idx);
-int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size);
+int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size,
+	u8 *source);
 int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
 	u32 first_slot, void *base, dma_addr_t dma, u32 slots, u64 generation,
 	u32 local_offset, u32 *tagged);

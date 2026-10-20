@@ -1033,7 +1033,7 @@ static void pil_ipa_fw_identity(struct pil_desc *desc,
 	buf = kmalloc(seg->filesz, GFP_KERNEL);
 	tfm = crypto_alloc_shash("sha256", 0, 0);
 	if (!buf || IS_ERR(tfm)) {
-		pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=unavailable sha256=none load_generation=%d\n",
+		pr_err("IPA13 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=unavailable sha256=none load_generation=%d\n",
 			desc->fw_name, seg->num, (u64)seg->vaddr,
 			(u64)seg->elf_paddr, seg->filesz, seg->sz,
 			(u64)seg->paddr, gen);
@@ -1048,7 +1048,7 @@ static void pil_ipa_fw_identity(struct pil_desc *desc,
 		ret = crypto_shash_digest(shash, buf, seg->filesz, digest);
 	}
 	if (ret) {
-		pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=error load_generation=%d\n",
+		pr_err("IPA13 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=error load_generation=%d\n",
 			desc->fw_name, seg->num, (u64)seg->vaddr,
 			(u64)seg->elf_paddr, seg->filesz, seg->sz,
 			(u64)seg->paddr, gen);
@@ -1058,7 +1058,7 @@ static void pil_ipa_fw_identity(struct pil_desc *desc,
 	for (i = 0; i < SHA256_DIGEST_SIZE; i++)
 		snprintf(hex + i * 2, 3, "%02x", digest[i]);
 
-	pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=%s load_generation=%d\n",
+	pr_err("IPA13 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=%s load_generation=%d\n",
 		desc->fw_name, seg->num, (u64)seg->vaddr, (u64)seg->elf_paddr,
 		seg->filesz, seg->sz, (u64)seg->paddr, hex, gen);
 
@@ -1439,7 +1439,7 @@ int pil_boot(struct pil_desc *desc)
 	notify_before_auth_and_reset(desc->dev);
 	ret = desc->ops->auth_and_reset(desc);
 	if (!strcmp(desc->fw_name, "ipa_fws"))
-		pr_err("IPA12 FWSTART image=%s load_generation=%d auth_start_ret=%d\n",
+		pr_err("IPA13 FWSTART image=%s load_generation=%d auth_start_ret=%d\n",
 			desc->fw_name, atomic_read(&pil_ipa_fw_load_gen), ret);
 	if (ret) {
 		pil_err(desc, "Failed to bring out of reset(rc:%d)\n", ret);

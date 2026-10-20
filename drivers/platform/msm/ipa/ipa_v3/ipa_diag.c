@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Round-12 IPA uC SMMU diagnostic: the static record ring, the printed
- * checkpoints, and the translation evidence taken at WDI enable.
+ * Round-13 IPA uC SMMU diagnostic: the static record ring, the memory-only
+ * enable checkpoints, and the fault-time classification against the clone
+ * registry.
  */
 
 #include <linux/atomic.h>
@@ -15,16 +16,13 @@
 #include "ipa_diag.h"
 #include "ipahal/ipahal_fltrt.h"
 
-#define IPA12_FAULT_IOVA	0x20000000ULL
-#define IPA12_NEIGHBOUR_HI	0x47e00000ULL
-#define IPA12_NEIGHBOUR_LO	0x47bcf000ULL
-
 struct ipa_diag_buf ipa_diag = {
 	.magic = IPA_DIAG_MAGIC,
 	.version = IPA_DIAG_VERSION,
 	.capacity = IPA_DIAG_CAPACITY,
 	.bufsize = sizeof(struct ipa_diag_rec),
-	.build = "r12 " UTS_RELEASE,
+	.tags_cov = IPA_DIAG_COV_UNKNOWN,
+	.build = "r13 " UTS_RELEASE,
 };
 
 static atomic_t ipa_diag_cursor = ATOMIC_INIT(0);
@@ -34,10 +32,7 @@ static atomic64_t ipa_diag_gen = ATOMIC64_INIT(0);
 static atomic64_t ipa_diag_rt_last = ATOMIC64_INIT(0);
 static atomic64_t ipa_diag_flt_last = ATOMIC64_INIT(0);
 
-void arm_smmu_iova_walk_domain(struct iommu_domain *domain, unsigned long iova,
-	unsigned int stage, unsigned int cb);
-int arm_smmu_domain_cbndx(struct iommu_domain *domain);
-
+static atomic_t ipa_diag_match_once = ATOMIC_INIT(0);
 static const char *ipa_diag_kind_name(u8 kind)
 {
 	return kind == IPA_DIAG_RT ? "rt" : "flt";
@@ -48,8 +43,9 @@ void ipa_diag_announce(void)
 	if (atomic_xchg(&ipa_diag_built, 1))
 		return;
 
-	pr_info("IPA12 BUF va=%px size=%zu capacity=%u\n",
-		(void *)&ipa_diag, sizeof(ipa_diag), IPA_DIAG_CAPACITY);
+	pr_info("IPA13 BUF va=%px size=%zu capacity=%u cov=%u\n",
+		(void *)&ipa_diag, sizeof(ipa_diag), IPA_DIAG_CAPACITY,
+		ipa_diag.tags_cov);
 }
 
 void ipa_diag_freeze(void)
@@ -68,7 +64,7 @@ void ipa_diag_mark_invalid(const char *why)
 	if (cmpxchg(&ipa_diag.invalid, 0u, 1u))
 		return;
 
-	pr_emerg("IPA12 INVALID reason=%s tags=%u\n", why,
+	pr_emerg("IPA13 INVALID reason=%s tags=%u\n", why,
 		ipahal_diag_tag_count());
 }
 
@@ -115,6 +111,9 @@ static void ipa_diag_record(const struct ipa_diag_rec *src)
 	r->is_sys = src->is_sys;
 	r->tagged = src->tagged;
 	r->done = src->done;
+	r->tag_alloc = src->tag_alloc;
+	r->tagged_slots = src->tagged_slots;
+	r->phase = src->phase;
 
 	WRITE_ONCE(ipa_diag.count, idx + 1);
 	smp_store_release(&r->seq, (u64)idx + 1);
@@ -133,7 +132,7 @@ void ipa_diag_alloc(struct device *dev, struct iommu_domain *domain,
 		.a = (u32)size,
 	};
 
-	pr_info("IPA12 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
+	pr_info("IPA13 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
 		dev ? dev_name(dev) : "(null)", dev, domain, &dma, size, cpu);
 
 	ipa_diag_record(&r);
@@ -199,99 +198,126 @@ void ipa_diag_pub(u64 gen, enum ipa_diag_kind kind, u8 ip, bool hashed,
 			atomic64_set(&ipa_diag_flt_last, gen);
 	}
 
-	pr_info("IPA12 PUB gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u\n",
-		gen, ipa_diag_kind_name(kind), ip, hashed ? 1 : 0, &src,
-		local_offset, length, slots, tagged, ret, done ? 1 : 0);
+	if (ret || ipa_diag_is_invalid())
+		pr_err("IPA13 PUBFAIL gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u invalid=%u\n",
+			gen, ipa_diag_kind_name(kind), ip, hashed ? 1 : 0,
+			&src, local_offset, length, slots, tagged, ret,
+			done ? 1 : 0, ipa_diag_is_invalid());
 
 	ipa_diag_record(&r);
 }
 
-static void ipa_diag_xlate_one(struct iommu_domain *domain, s32 cb,
-	u64 iova, u64 len, u32 stage)
+static atomic64_t ipa_diag_enable_seq = ATOMIC64_INIT(0);
+
+static void ipa_diag_enable_record(u64 seq, u32 pipe, u32 ready,
+	enum ipa_diag_phase phase, int command_ret)
 {
-	phys_addr_t pa;
-
-	if (!domain)
-		return;
-
-	pa = iommu_iova_to_phys(domain, (unsigned long)iova);
-	pr_info("IPA12 XLATE stage=%u domain=%px cb=%d iova=%#llx len=%#llx pa=%#llx\n",
-		stage, (void *)domain, cb, iova, len, (u64)pa);
-}
-
-static void ipa_diag_xlate_domain(struct iommu_domain *domain)
-{
-	phys_addr_t empty = ipahal_get_empty_fltrt_base();
-	u32 i, n = ipahal_diag_tag_count();
-	s32 cb = arm_smmu_domain_cbndx(domain);
-
-	/* The footprint a table consumer may stride, not just its first byte. */
-	ipa_diag_xlate_one(domain, cb, (u64)empty, 8, IPA_DIAG_ENABLE);
-	ipa_diag_xlate_one(domain, cb, (u64)empty, 4096, IPA_DIAG_ENABLE);
-	ipa_diag_xlate_one(domain, cb, IPA12_FAULT_IOVA, 8, IPA_DIAG_ENABLE);
-	ipa_diag_xlate_one(domain, cb, IPA12_FAULT_IOVA, 4096,
-		IPA_DIAG_ENABLE);
-	ipa_diag_xlate_one(domain, cb, IPA12_NEIGHBOUR_HI, 4096,
-		IPA_DIAG_ENABLE);
-	ipa_diag_xlate_one(domain, cb, IPA12_NEIGHBOUR_LO, 4096,
-		IPA_DIAG_ENABLE);
-
-	for (i = 0; i < n; i++) {
-		u64 tag = (u64)ipahal_diag_tag_addr(i);
-
-		ipa_diag_xlate_one(domain, cb, tag, 8, IPA_DIAG_ENABLE);
-		ipa_diag_xlate_one(domain, cb, tag, 4096, IPA_DIAG_ENABLE);
-	}
-}
-
-static void ipa_diag_walk_domain(struct iommu_domain *domain)
-{
-	phys_addr_t empty = ipahal_get_empty_fltrt_base();
-	u32 i, n = ipahal_diag_tag_count();
-	u32 cb = (u32)arm_smmu_domain_cbndx(domain);
-
-	if (!domain)
-		return;
-
-	arm_smmu_iova_walk_domain(domain, (unsigned long)empty,
-		IPA_DIAG_ENABLE, cb);
-	arm_smmu_iova_walk_domain(domain, (unsigned long)IPA12_FAULT_IOVA,
-		IPA_DIAG_ENABLE, cb);
-	for (i = 0; i < n; i++)
-		arm_smmu_iova_walk_domain(domain,
-			(unsigned long)ipahal_diag_tag_addr(i),
-			IPA_DIAG_ENABLE, cb);
-}
-
-void ipa_diag_enable(u32 pipe)
-{
-	struct iommu_domain *ap = ipa3_get_smmu_domain();
-	struct iommu_domain *uc = ipa3_get_uc_smmu_domain();
-	u64 rt = (u64)atomic64_read(&ipa_diag_rt_last);
-	u64 flt = (u64)atomic64_read(&ipa_diag_flt_last);
-	u64 ns = (u64)ktime_get_ns();
+	u64 rt = atomic64_read(&ipa_diag_rt_last);
+	u64 flt = atomic64_read(&ipa_diag_flt_last);
 	struct ipa_diag_rec r = {
-		.generation = rt,
+		.generation = seq,
+		.submitted_raw = (u64)ktime_get_ns(),
+		.decoded_addr = rt,
+		.clone_dma = flt,
+		.tag_alloc = ipahal_diag_tag_count(),
+		.tagged_slots = ipahal_diag_tagged_count(),
 		.slot = pipe,
 		.pipe = (s32)pipe,
+		.ret = command_ret,
 		.a = (u32)flt,
+		.b = ready,
 		.stage = IPA_DIAG_ENABLE,
 		.kind = IPA_DIAG_NONE,
+		.phase = (u8)phase,
 	};
 
-	pr_info("IPA12 ENABLE pipe=%u rt_gen=%llu flt_gen=%llu ns=%llu\n",
-		pipe, rt, flt, ns);
 	ipa_diag_record(&r);
 
-	pr_info("IPA12 ENFORCE ap_cb=%d uc_cb=%d ap_domain=%px uc_domain=%px tags=%u invalid=%u\n",
-		arm_smmu_domain_cbndx(ap), arm_smmu_domain_cbndx(uc),
-		(void *)ap, (void *)uc, ipahal_diag_tag_count(),
-		ipa_diag_is_invalid());
+	if (phase != IPA_DIAG_PHASE_CHECKPOINT_EXIT)
+		return;
 
-	ipa_diag_xlate_domain(ap);
-	ipa_diag_xlate_domain(uc);
-	ipa_diag_walk_domain(ap);
-	ipa_diag_walk_domain(uc);
+	pr_info("IPA13 ENABLE seq=%llu pipe=%u rt_gen=%llu flt_gen=%llu tags=%u slots=%u ready=%#x ns=%llu\n",
+		seq, pipe, rt, flt, r.tag_alloc, r.tagged_slots, ready,
+		r.submitted_raw);
+}
+
+u64 ipa_diag_enable_begin(u32 pipe, u32 ready)
+{
+	u64 seq = (u64)atomic64_inc_return(&ipa_diag_enable_seq);
+
+	ipa_diag_enable_record(seq, pipe, ready,
+		IPA_DIAG_PHASE_CHECKPOINT_ENTER, 0);
+	return seq;
+}
+
+void ipa_diag_enable_phase(u64 seq, u32 pipe, u32 ready,
+	enum ipa_diag_phase phase, int command_ret)
+{
+	ipa_diag_enable_record(seq, pipe, ready, phase, command_ret);
+}
+
+static void ipa_diag_append_frozen(const struct ipa_diag_rec *src)
+{
+	u32 idx = (u32)atomic_inc_return(&ipa_diag_cursor) - 1;
+	struct ipa_diag_rec *slot;
+
+	if (idx >= IPA_DIAG_CAPACITY) {
+		WRITE_ONCE(ipa_diag.overflow, 1);
+		return;
+	}
+
+	slot = &ipa_diag.rec[idx];
+	*slot = *src;
+	WRITE_ONCE(ipa_diag.count, idx + 1);
+	smp_store_release(&slot->seq, (u64)idx + 1);
+}
+
+void ipa_diag_match(u64 far)
+{
+	u64 base = (u64)ipahal_get_empty_fltrt_base();
+	u64 size = (u64)ipahal_get_empty_fltrt_size();
+	u64 tbase = 0, tsize = 0, last, off = 0;
+	u32 id = 0, kind = IPA_DIAG_MATCH_NEITHER, flags = 0;
+	struct ipa_diag_rec r;
+
+	if (atomic_xchg(&ipa_diag_match_once, 1))
+		return;
+
+	if (ipahal_diag_tag_lookup(far, &id, &tbase, &tsize)) {
+		kind = IPA_DIAG_MATCH_TAG;
+		base = tbase;
+		size = tsize;
+	} else if (far >= base && far < base + size) {
+		kind = IPA_DIAG_MATCH_ORIGINAL;
+	}
+
+	if (kind != IPA_DIAG_MATCH_NEITHER) {
+		off = far - base;
+		if (far >= base && far < base + size)
+			flags |= IPA_DIAG_MATCH_OBJECT;
+		else if (far >= (base & PAGE_MASK) &&
+			 far < PAGE_ALIGN(base + size))
+			flags |= IPA_DIAG_MATCH_GRANULE;
+	}
+
+	last = max_t(u64, atomic64_read(&ipa_diag_rt_last),
+		     atomic64_read(&ipa_diag_flt_last));
+
+	pr_emerg("IPA13 MATCH far=%#llx kind=%u tag_id=%u base=%#llx size=%#llx off=%#llx last_pub_gen=%llu\n",
+		far, kind, id, base, size, off, last);
+
+	r = (struct ipa_diag_rec) {
+		.generation = last,
+		.submitted_raw = far,
+		.image_dma = base,
+		.length = (u32)size,
+		.local_byte_offset = (u32)off,
+		.a = flags,
+		.b = id,
+		.stage = IPA_DIAG_MATCH,
+		.kind = IPA_DIAG_NONE,
+	};
+	ipa_diag_append_frozen(&r);
 }
 
 /*
@@ -326,27 +352,16 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 		.b = cbfrsynra,
 	};
 
-	pr_emerg("IPA12 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
+	pr_emerg("IPA13 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
 		cb, sid, far, fsr, fsynr0, ns, report_ret);
 
-	/* The fault record is the one append that must survive the freeze. */
+	/* The fault and match records are the appends that survive the freeze. */
 	ipa_diag_freeze();
-	{
-		u32 idx = (u32)atomic_inc_return(&ipa_diag_cursor) - 1;
-		struct ipa_diag_rec *slot;
-
-		if (idx >= IPA_DIAG_CAPACITY) {
-			WRITE_ONCE(ipa_diag.overflow, 1);
-			return;
-		}
-		slot = &ipa_diag.rec[idx];
-		*slot = r;
-		WRITE_ONCE(ipa_diag.count, idx + 1);
-		smp_store_release(&slot->seq, (u64)idx + 1);
-	}
+	ipa_diag_append_frozen(&r);
+	ipa_diag_match(far);
 
 	/* Whatever the handler already published stays checkable. */
-	pr_emerg("IPA12 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
+	pr_emerg("IPA13 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
 		sid_mask, fsynr1, cbfrsynra, (int)smr_idx,
 		ipahal_diag_tag_count(), ipa_diag_is_invalid(),
 		READ_ONCE(ipa_diag.overflow));

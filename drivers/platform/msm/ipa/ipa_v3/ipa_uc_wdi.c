@@ -2578,6 +2578,7 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	struct ipa3_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t enable;
 	struct ipa_ep_cfg_holb holb_cfg;
+	u64 seq;
 #ifdef CONFIG_ARCH_MSM8998
 	struct ipahal_reg_endp_init_rsrc_grp rsrc_grp;
 #endif
@@ -2606,17 +2607,18 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 	enable.params.ipa_pipe_number = clnt_hdl;
 
+	seq = ipa_diag_enable_begin(clnt_hdl, ep->uc_offload_state);
 	ipa_wdi_diag_cache("enable", clnt_hdl);
-	IPA_WDI_DIAG("submit stage=enable op=%u pipe=%u params=%08x\n",
-		IPA_CPU_2_HW_CMD_WDI_CH_ENABLE, clnt_hdl,
-		(unsigned int)enable.raw32b);
-	/* Once per boot: the headers the uC can reach when it starts walking. */
-	ipa3_dump_fltrt_hdrs("wdi_enable");
-	ipa_diag_enable(clnt_hdl);
+	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
+		IPA_DIAG_PHASE_CHECKPOINT_EXIT, 0);
+	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
+		IPA_DIAG_PHASE_COMMAND_ENTER, 0);
 	result = ipa3_uc_send_cmd(enable.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_CH_ENABLE,
 		IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
 		false, 10*HZ);
+	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
+		IPA_DIAG_PHASE_COMMAND_RETURN, result);
 
 	if (result) {
 		result = -EFAULT;

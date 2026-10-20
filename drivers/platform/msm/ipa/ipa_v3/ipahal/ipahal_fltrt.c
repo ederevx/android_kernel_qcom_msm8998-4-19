@@ -3621,19 +3621,53 @@ struct ipahal_diag_tag {
 
 static struct ipahal_diag_tag ipahal_diag_tags[IPA_DIAG_TAG_MAX];
 static u32 ipahal_diag_tags_used;
+static atomic_t ipahal_diag_tagged_slots = ATOMIC_INIT(0);
 static DEFINE_MUTEX(ipahal_diag_tags_lock);
+
+size_t ipahal_get_empty_fltrt_size(void)
+{
+	return ipahal_ctx->empty_fltrt_tbl.size;
+}
 
 u32 ipahal_diag_tag_count(void)
 {
-	return READ_ONCE(ipahal_diag_tags_used);
+	return smp_load_acquire(&ipahal_diag_tags_used);
+}
+
+u32 ipahal_diag_tagged_count(void)
+{
+	return (u32)atomic_read(&ipahal_diag_tagged_slots);
 }
 
 dma_addr_t ipahal_diag_tag_addr(u32 idx)
 {
-	if (idx >= READ_ONCE(ipahal_diag_tags_used))
+	if (idx >= ipahal_diag_tag_count())
 		return 0;
 
 	return ipahal_diag_tags[idx].dma;
+}
+
+/*
+ * Read-only registry probe for the fault path: the writer publishes an entry
+ * before releasing the count, so an acquisition load never sees a partial one.
+ */
+int ipahal_diag_tag_lookup(u64 far, u32 *idx, u64 *base, u64 *size)
+{
+	u32 i, n = ipahal_diag_tag_count();
+	u64 sz = ipahal_get_empty_fltrt_size();
+
+	for (i = 0; i < n; i++) {
+		struct ipahal_diag_tag *t = &ipahal_diag_tags[i];
+
+		if (far >= (u64)t->dma && far < (u64)t->dma + sz) {
+			*idx = i;
+			*base = (u64)t->dma;
+			*size = sz;
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 static struct ipahal_diag_tag *ipahal_diag_tag_find(u8 kind, u8 ip,
@@ -3690,7 +3724,7 @@ static struct ipahal_diag_tag *ipahal_diag_tag_get(u8 kind, u8 ip,
 	t->hashed = hashed;
 	t->pipe = pipe;
 	t->slot = slot;
-	ipahal_diag_tags_used++;
+	smp_store_release(&ipahal_diag_tags_used, ipahal_diag_tags_used + 1);
 
 	return t;
 }
@@ -3786,6 +3820,7 @@ int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
 	}
 
 out:
+	atomic_add(*tagged, &ipahal_diag_tagged_slots);
 	mutex_unlock(&ipahal_diag_tags_lock);
 	return ret;
 }

@@ -106,6 +106,67 @@ static bool is_dma_coherent(struct device *dev, unsigned long attrs)
 	return is_coherent;
 }
 
+#if IS_ENABLED(CONFIG_IPA)
+void ipa3_audit_map(const char *dom, u32 domid, unsigned long iova,
+	phys_addr_t pa, size_t size, int prot, int ret,
+	unsigned long caller);
+void ipa3_audit_unmap(const char *dom, u32 domid, unsigned long iova,
+	size_t requested, size_t unmapped, unsigned long caller);
+
+static bool fast_smmu_audit_dom(struct device *dev, const char **dom, u32 *domid)
+{
+	const char *name = dev_name(dev);
+
+	if (strstr(name, "ipa_smmu_ap")) {
+		*dom = "AP";
+		*domid = 0;
+	} else if (strstr(name, "ipa_smmu_wlan")) {
+		*dom = "WLAN";
+		*domid = 1;
+	} else if (strstr(name, "ipa_smmu_uc")) {
+		*dom = "UC";
+		*domid = 2;
+	} else {
+		return false;
+	}
+
+	return true;
+}
+
+static void fast_smmu_audit_map(struct device *dev, unsigned long iova,
+	phys_addr_t pa, size_t size, int prot, int ret,
+	unsigned long caller)
+{
+	const char *dom;
+	u32 domid;
+
+	if (fast_smmu_audit_dom(dev, &dom, &domid))
+		ipa3_audit_map(dom, domid, iova, pa, size, prot, ret, caller);
+}
+
+static void fast_smmu_audit_unmap(struct device *dev, unsigned long iova,
+	size_t requested, size_t unmapped, unsigned long caller)
+{
+	const char *dom;
+	u32 domid;
+
+	if (fast_smmu_audit_dom(dev, &dom, &domid))
+		ipa3_audit_unmap(dom, domid, iova, requested, unmapped,
+			caller);
+}
+#else
+static void fast_smmu_audit_map(struct device *dev, unsigned long iova,
+	phys_addr_t pa, size_t size, int prot, int ret,
+	unsigned long caller)
+{
+}
+
+static void fast_smmu_audit_unmap(struct device *dev, unsigned long iova,
+	size_t requested, size_t unmapped, unsigned long caller)
+{
+}
+#endif
+
 static struct dma_fast_smmu_mapping *dev_get_mapping(struct device *dev)
 {
 	struct iommu_domain *domain;
@@ -293,6 +354,7 @@ static dma_addr_t fast_smmu_map_page(struct device *dev, struct page *page,
 	bool skip_sync = (attrs & DMA_ATTR_SKIP_CPU_SYNC);
 	bool is_coherent = is_dma_coherent(dev, attrs);
 	int prot = dma_info_to_prot(dir, is_coherent, attrs);
+	int ret;
 
 	if (!skip_sync && !is_coherent)
 		__fast_dma_page_cpu_to_dev(phys_to_page(phys_to_map),
@@ -305,16 +367,21 @@ static dma_addr_t fast_smmu_map_page(struct device *dev, struct page *page,
 	if (unlikely(iova == DMA_ERROR_CODE))
 		goto fail;
 
-	if (unlikely(av8l_fast_map_public(mapping->pgtbl_ops, iova,
-					  phys_to_map, len, prot)))
+	ret = av8l_fast_map_public(mapping->pgtbl_ops, iova,
+				   phys_to_map, len, prot);
+	if (unlikely(ret))
 		goto fail_free_iova;
 
 	spin_unlock_irqrestore(&mapping->lock, flags);
 
+	fast_smmu_audit_map(dev, iova, phys_to_map, len, prot, 0,
+		(unsigned long)__builtin_return_address(0));
 	trace_map(mapping->domain, iova, phys_to_map, len, prot);
 	return iova + offset_from_phys_to_map;
 
 fail_free_iova:
+	fast_smmu_audit_map(dev, iova, phys_to_map, len, prot, ret,
+		(unsigned long)__builtin_return_address(0));
 	__fast_smmu_free_iova(mapping, iova, size);
 fail:
 	spin_unlock_irqrestore(&mapping->lock, flags);
@@ -347,6 +414,8 @@ static void fast_smmu_unmap_page(struct device *dev, dma_addr_t iova,
 	__fast_smmu_free_iova(mapping, iova, len);
 	spin_unlock_irqrestore(&mapping->lock, flags);
 
+	fast_smmu_audit_unmap(dev, iova - offset, len, len,
+		(unsigned long)__builtin_return_address(0));
 	trace_unmap(mapping->domain, iova - offset, len, len);
 }
 
@@ -443,6 +512,9 @@ static int fast_smmu_map_sg(struct device *dev, struct scatterlist *sg,
 
 	ret = iommu_dma_finalise_sg(dev, sg, nents, iova);
 
+	fast_smmu_audit_map(dev, iova, sg_phys(sg), iova_len, prot, ret,
+		(unsigned long)__builtin_return_address(0));
+
 	if ((attrs & DMA_ATTR_SKIP_CPU_SYNC) == 0)
 		fast_smmu_sync_sg_for_device(dev, sg, nents, dir);
 
@@ -486,6 +558,9 @@ static void fast_smmu_unmap_sg(struct device *dev,
 	spin_lock_irqsave(&mapping->lock, flags);
 	__fast_smmu_free_iova(mapping, start, len);
 	spin_unlock_irqrestore(&mapping->lock, flags);
+
+	fast_smmu_audit_unmap(dev, start, len, len,
+		(unsigned long)__builtin_return_address(0));
 }
 
 static void __fast_smmu_free_pages(struct page **pages, int count)
@@ -531,6 +606,9 @@ static void *fast_smmu_alloc_atomic(struct dma_fast_smmu_mapping *mapping,
 	}
 	spin_unlock_irqrestore(&mapping->lock, flags);
 	*handle = dma_addr;
+	fast_smmu_audit_map(mapping->dev, dma_addr, page_to_phys(page),
+		size, prot, 0,
+		(unsigned long)__builtin_return_address(0));
 	return addr;
 
 out_free_iova:
@@ -606,6 +684,8 @@ static void *__fast_smmu_alloc_contiguous(struct device *dev, size_t size,
 		__dma_flush_area(page_to_virt(page), size);
 
 	*handle = iova;
+	fast_smmu_audit_map(dev, iova, page_to_phys(page), size, prot, 0,
+		(unsigned long)__builtin_return_address(0));
 	return coherent_addr;
 
 release_mapping:
@@ -708,6 +788,8 @@ static void *fast_smmu_alloc(struct device *dev, size_t size,
 	}
 
 	*handle = dma_addr;
+	fast_smmu_audit_map(dev, dma_addr, page_to_phys(pages[0]), size,
+		prot, 0, (unsigned long)__builtin_return_address(0));
 	sg_free_table(&sgt);
 	return addr;
 
@@ -739,6 +821,9 @@ static void fast_smmu_free(struct device *dev, size_t size,
 	av8l_fast_unmap_public(mapping->pgtbl_ops, dma_handle, size);
 	__fast_smmu_free_iova(mapping, dma_handle, size);
 	spin_unlock_irqrestore(&mapping->lock, flags);
+
+	fast_smmu_audit_unmap(dev, dma_handle, size, size,
+		(unsigned long)__builtin_return_address(0));
 
 	area = find_vm_area(cpu_addr);
 	if (area && area->pages) {
@@ -843,6 +928,7 @@ static dma_addr_t fast_smmu_dma_map_resource(
 	size_t len = round_up(size + offset, FAST_PAGE_SIZE);
 	dma_addr_t dma_addr;
 	int prot;
+	int ret;
 	unsigned long flags;
 
 	spin_lock_irqsave(&mapping->lock, flags);
@@ -855,13 +941,19 @@ static dma_addr_t fast_smmu_dma_map_resource(
 	prot = dma_info_to_prot(dir, false, attrs);
 	prot |= IOMMU_MMIO;
 
-	if (iommu_map(mapping->domain, dma_addr, phys_addr - offset,
-			len, prot)) {
+	ret = iommu_map(mapping->domain, dma_addr, phys_addr - offset,
+			len, prot);
+	if (ret) {
 		spin_lock_irqsave(&mapping->lock, flags);
 		__fast_smmu_free_iova(mapping, dma_addr, len);
 		spin_unlock_irqrestore(&mapping->lock, flags);
+		fast_smmu_audit_map(dev, dma_addr, phys_addr - offset,
+			len, prot, ret,
+			(unsigned long)__builtin_return_address(0));
 		return DMA_ERROR_CODE;
 	}
+	fast_smmu_audit_map(dev, dma_addr, phys_addr - offset, len, prot, 0,
+		(unsigned long)__builtin_return_address(0));
 	return dma_addr + offset;
 }
 
@@ -879,6 +971,8 @@ static void fast_smmu_dma_unmap_resource(
 	spin_lock_irqsave(&mapping->lock, flags);
 	__fast_smmu_free_iova(mapping, addr, len);
 	spin_unlock_irqrestore(&mapping->lock, flags);
+	fast_smmu_audit_unmap(dev, addr - offset, len, len,
+		(unsigned long)__builtin_return_address(0));
 }
 
 static int fast_smmu_mapping_error(struct device *dev,
@@ -1109,6 +1203,9 @@ int fast_smmu_init_mapping(struct device *dev,
 
 	domain->geometry.aperture_start = mapping->base;
 	domain->geometry.aperture_end = mapping->base + size - 1;
+
+	pr_err("IPA_AUDIT fast init dev=%s base=0x%llx size=0x%llx\n",
+		dev_name(dev), (u64)mapping->base, (u64)size);
 
 	if (iommu_domain_get_attr(domain, DOMAIN_ATTR_PGTBL_INFO,
 				  &info)) {

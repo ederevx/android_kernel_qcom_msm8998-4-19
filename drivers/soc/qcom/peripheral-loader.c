@@ -5,6 +5,8 @@
 
 #include <linux/module.h>
 #include <linux/string.h>
+#include <crypto/hash.h>
+#include <crypto/sha.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
 #include <linux/elf.h>
@@ -104,12 +106,17 @@ struct pil_mdt {
  */
 struct pil_seg {
 	phys_addr_t paddr;
+	phys_addr_t vaddr;
+	phys_addr_t elf_paddr;
 	unsigned long sz;
 	unsigned long filesz;
 	int num;
 	struct list_head list;
 	bool relocated;
 };
+
+/* Round-12 firmware-load identity, one generation per ipa_fws load. */
+static atomic_t pil_ipa_fw_load_gen = ATOMIC_INIT(0);
 
 /**
  * struct pil_priv - Private state for a pil_desc
@@ -716,6 +723,8 @@ static struct pil_seg *pil_init_seg(const struct pil_desc *desc,
 	if (!seg)
 		return ERR_PTR(-ENOMEM);
 	seg->num = num;
+	seg->vaddr = phdr->p_vaddr;
+	seg->elf_paddr = phdr->p_paddr;
 	seg->paddr = reloc ? pil_reloc(priv, phdr->p_paddr) : phdr->p_paddr;
 	seg->filesz = phdr->p_filesz;
 	seg->sz = phdr->p_memsz;
@@ -1004,6 +1013,61 @@ static void unmap_fw_mem(void *vaddr, size_t size, void *data)
 	dma_unremap(info->dev, vaddr, size);
 }
 
+/*
+ * Round-12 passive firmware-load identity: hash exactly p_filesz bytes where
+ * the loader itself mapped the destination segment, before any PAS
+ * authentication or reset permits execution. No new mapping is created and no
+ * phys_to_virt() is used on the firmware range.
+ */
+static void pil_ipa_fw_identity(struct pil_desc *desc,
+	const struct pil_seg *seg, void __iomem *dst)
+{
+	struct crypto_shash *tfm;
+	u8 *buf;
+	u8 digest[SHA256_DIGEST_SIZE];
+	char hex[SHA256_DIGEST_SIZE * 2 + 1];
+	int gen, i, ret;
+
+	gen = atomic_inc_return(&pil_ipa_fw_load_gen);
+
+	buf = kmalloc(seg->filesz, GFP_KERNEL);
+	tfm = crypto_alloc_shash("sha256", 0, 0);
+	if (!buf || IS_ERR(tfm)) {
+		pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=unavailable sha256=none load_generation=%d\n",
+			desc->fw_name, seg->num, (u64)seg->vaddr,
+			(u64)seg->elf_paddr, seg->filesz, seg->sz,
+			(u64)seg->paddr, gen);
+		goto out;
+	}
+
+	memcpy_fromio(buf, dst, seg->filesz);
+	{
+		SHASH_DESC_ON_STACK(shash, tfm);
+
+		shash->tfm = tfm;
+		ret = crypto_shash_digest(shash, buf, seg->filesz, digest);
+	}
+	if (ret) {
+		pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=error load_generation=%d\n",
+			desc->fw_name, seg->num, (u64)seg->vaddr,
+			(u64)seg->elf_paddr, seg->filesz, seg->sz,
+			(u64)seg->paddr, gen);
+		goto out;
+	}
+
+	for (i = 0; i < SHA256_DIGEST_SIZE; i++)
+		snprintf(hex + i * 2, 3, "%02x", digest[i]);
+
+	pr_err("IPA12 FW image=%s segment=%d elf_vaddr=%#llx elf_paddr=%#llx filesz=%#lx memsz=%#lx load_pa=%#llx hash_scope=file-bytes sha256=%s load_generation=%d\n",
+		desc->fw_name, seg->num, (u64)seg->vaddr, (u64)seg->elf_paddr,
+		seg->filesz, seg->sz, (u64)seg->paddr, hex, gen);
+
+out:
+	kfree(buf);
+	if (!IS_ERR(tfm))
+		crypto_free_shash(tfm);
+}
+
 static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 {
 	int ret = 0, count;
@@ -1032,6 +1096,12 @@ static int pil_load_seg(struct pil_desc *desc, struct pil_seg *seg)
 
 		ret = request_firmware_into_buf(&fw, fw_name, desc->dev,
 						firmware_buf, seg->filesz);
+		/*
+		 * Identity of the executable segment as loaded, hashed through
+		 * the mapping the loader already holds, before it is dropped.
+		 */
+		if (!ret && !strcmp(desc->fw_name, "ipa_fws") && seg->num == 2)
+			pil_ipa_fw_identity(desc, seg, firmware_buf);
 		desc->unmap_fw_mem(firmware_buf, seg->filesz, map_data);
 
 		if (ret) {
@@ -1368,6 +1438,9 @@ int pil_boot(struct pil_desc *desc)
 	pil_log("before_auth_reset", desc);
 	notify_before_auth_and_reset(desc->dev);
 	ret = desc->ops->auth_and_reset(desc);
+	if (!strcmp(desc->fw_name, "ipa_fws"))
+		pr_err("IPA12 FWSTART image=%s load_generation=%d auth_start_ret=%d\n",
+			desc->fw_name, atomic_read(&pil_ipa_fw_load_gen), ret);
 	if (ret) {
 		pil_err(desc, "Failed to bring out of reset(rc:%d)\n", ret);
 		goto err_auth_and_reset;

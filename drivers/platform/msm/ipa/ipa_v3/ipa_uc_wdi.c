@@ -4,6 +4,7 @@
  */
 
 #include "ipa_i.h"
+#include "ipa_diag.h"
 #include <linux/dmapool.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
@@ -103,6 +104,121 @@ enum ipa_cpu_2_hw_wdi_commands {
 	IPA_CPU_2_HW_CMD_WDI_TEAR_DOWN  =
 		FEATURE_ENUM_VAL(IPA_HW_FEATURE_WDI, 7),
 };
+
+/*
+ * Diagnostic only: the IPA uC faults on a uC-context IOVA the host has no
+ * record of publishing, and the set-up command buffer is freed after the
+ * send, so the values the host handed over survive nowhere but a live log.
+ * Every record is KERN_ERR so nothing depends on a debug knob; whether it
+ * reaches the console or survives a panic is the capture's business. Every
+ * record carries the same tag.
+ */
+#define IPA_WDI_DIAG(fmt, ...) \
+	pr_err("IPA_WDI_DIAG: " fmt, ##__VA_ARGS__)
+
+#define IPA_WDI_DIAG_LO(v) \
+	((unsigned int)((unsigned long long)(v) & 0xffffffffULL))
+#define IPA_WDI_DIAG_HI(v) \
+	((unsigned int)((unsigned long long)(v) >> 32))
+
+/*
+ * One publication record per set-up site per boot, emitted after the payload
+ * is fully serialised and immediately before it is handed to the uC. The
+ * values are the payload fields themselves, so their widths are the struct's
+ * and they are SMMU IOVAs in the uC context, never PAs. The ABI states no
+ * domain for the consumer, so it is reported as unknown rather than assumed.
+ * The site index is explicit: the opcode is shared by two sites per
+ * direction and cannot identify one.
+ */
+enum ipa_uc_wdi_pub_site {
+	IPA_UC_WDI_PUB_TX2,
+	IPA_UC_WDI_PUB_TX,
+	IPA_UC_WDI_PUB_RX2,
+	IPA_UC_WDI_PUB_RX,
+	IPA_UC_WDI_PUB_SITES,
+};
+
+struct ipa_uc_wdi_pub {
+	const char *site;
+	enum ipa_uc_wdi_pub_site id;
+	u32 opcode;
+	u32 v[8];
+};
+
+static unsigned long ipa_uc_wdi_pub_done;
+static atomic_t ipa_uc_wdi_pub_emitted = ATOMIC_INIT(0);
+static atomic_t ipa_uc_wdi_pub_suppressed = ATOMIC_INIT(0);
+static const char *ipa_uc_wdi_pub_last_site = "none";
+
+static void ipa3_uc_wdi_publish(const struct ipa_uc_wdi_pub *pub)
+{
+	ipa_uc_wdi_pub_last_site = pub->site;
+
+	if (test_and_set_bit(pub->id, &ipa_uc_wdi_pub_done)) {
+		atomic_inc(&ipa_uc_wdi_pub_suppressed);
+		return;
+	}
+
+	atomic_inc(&ipa_uc_wdi_pub_emitted);
+	pr_err("IPA_PUBLISH site=%s op=%u cb=2 sid=0x18e2 src_dom=UC src_domid=UNKNOWN consumer=uC consumer_domain=UNKNOWN v=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x\n",
+		pub->site, pub->opcode,
+		pub->v[0], pub->v[1], pub->v[2], pub->v[3],
+		pub->v[4], pub->v[5], pub->v[6], pub->v[7]);
+}
+
+/*
+ * Called from the SMMU context fault path: emitted plus suppressed accounts
+ * for every publication, so a ring that lost the records is detectable
+ * instead of being read as evidence that nothing was published.
+ */
+void ipa3_uc_wdi_publish_report(unsigned int cb, unsigned long iova, u32 fsr)
+{
+	pr_err("IPA_PUBLISH report cb=%u iova=0x%lx fsr=0x%x emitted=%d suppressed=%d last_site=%s maps_skipped=%u\n",
+		cb, iova, fsr,
+		atomic_read(&ipa_uc_wdi_pub_emitted),
+		atomic_read(&ipa_uc_wdi_pub_suppressed),
+		ipa_uc_wdi_pub_last_site, ipa3_audit_map_skipped_count());
+}
+
+/*
+ * Snapshot of the cached WDI addresses: what the host still believes the uC
+ * was told, plus the uC SMMU allocator cursor. The two virtual pointer cells
+ * are printed, never dereferenced.
+ */
+static void ipa_wdi_diag_cache(const char *stage, u32 pipe)
+{
+	struct ipa3_uc_ctx *uc = &ipa3_ctx->uc_ctx;
+	struct ipa3_wdi2_ctx *w2 = &ipa3_ctx->wdi2_ctx;
+	struct ipa_smmu_cb_ctx *ucb = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
+	u32 state = pipe < ipa3_ctx->ipa_num_pipes ?
+		ipa3_ctx->ep[pipe].uc_offload_state : 0;
+
+	IPA_WDI_DIAG("cache stage=%s pipe=%u offload=0x%x ucnxt=%016llx "
+		"uc rb=%08x:%08x rp=%08x:%08x rsz=%u cb=%08x:%08x "
+		"cwp=%08x:%08x csz=%u "
+		"w2 rb=%08x:%08x rp=%08x:%08x rsz=%u cb=%08x:%08x "
+		"cwp=%08x:%08x csz=%u ucrpva=%p uccwpva=%p\n",
+		stage, pipe, state, (unsigned long long)ucb->next_addr,
+		IPA_WDI_DIAG_HI(uc->rdy_ring_base_pa),
+		IPA_WDI_DIAG_LO(uc->rdy_ring_base_pa),
+		IPA_WDI_DIAG_HI(uc->rdy_ring_rp_pa),
+		IPA_WDI_DIAG_LO(uc->rdy_ring_rp_pa), uc->rdy_ring_size,
+		IPA_WDI_DIAG_HI(uc->rdy_comp_ring_base_pa),
+		IPA_WDI_DIAG_LO(uc->rdy_comp_ring_base_pa),
+		IPA_WDI_DIAG_HI(uc->rdy_comp_ring_wp_pa),
+		IPA_WDI_DIAG_LO(uc->rdy_comp_ring_wp_pa),
+		uc->rdy_comp_ring_size,
+		IPA_WDI_DIAG_HI(w2->rdy_ring_base_pa),
+		IPA_WDI_DIAG_LO(w2->rdy_ring_base_pa),
+		IPA_WDI_DIAG_HI(w2->rdy_ring_rp_pa),
+		IPA_WDI_DIAG_LO(w2->rdy_ring_rp_pa), w2->rdy_ring_size,
+		IPA_WDI_DIAG_HI(w2->rdy_comp_ring_base_pa),
+		IPA_WDI_DIAG_LO(w2->rdy_comp_ring_base_pa),
+		IPA_WDI_DIAG_HI(w2->rdy_comp_ring_wp_pa),
+		IPA_WDI_DIAG_LO(w2->rdy_comp_ring_wp_pa),
+		w2->rdy_comp_ring_size,
+		uc->rdy_ring_rp_va, uc->rdy_comp_ring_wp_va);
+}
 
 /**
  * enum ipa_hw_2_cpu_cmd_resp_status -  Values that represent WDI related
@@ -405,6 +521,11 @@ static void ipa3_uc_wdi_event_handler(struct IpaHwSharedMemCommonMapping_t
 		IPADBG("tx_ch_state=%u rx_ch_state=%u\n",
 			wdi_sram_mmio_ext->wdi_tx_ch_0_state,
 			wdi_sram_mmio_ext->wdi_rx_ch_0_state);
+		IPA_WDI_DIAG("wdievt errtype=%u pipe=%d cherr=%u raw=%08x\n",
+			(unsigned int)wdi_evt.params.wdi_error_type,
+			(int)wdi_evt.params.ipa_pipe_number,
+			(unsigned int)wdi_evt.params.wdi_ch_err_type,
+			(unsigned int)wdi_evt.raw32b);
 	}
 }
 
@@ -668,7 +789,7 @@ static int ipa_create_ap_smmu_mapping_sgt(struct sg_table *sgt,
 
 bad_mapping:
 	for_each_sg(sgt->sgl, sg, count, i)
-		iommu_unmap(cb->iommu_domain, sg_dma_address(sg),
+		ipa3_iommu_unmap(cb->iommu_domain, sg_dma_address(sg),
 				sg_dma_len(sg));
 	return -EINVAL;
 }
@@ -719,7 +840,7 @@ static int ipa_create_uc_smmu_mapping_sgt(struct sg_table *sgt,
 
 bad_mapping:
 	for_each_sg(sgt->sgl, sg, count, i)
-		iommu_unmap(cb->iommu_domain, sg_dma_address(sg),
+		ipa3_iommu_unmap(cb->iommu_domain, sg_dma_address(sg),
 				sg_dma_len(sg));
 	return -EINVAL;
 }
@@ -747,7 +868,7 @@ static void ipa_release_ap_smmu_mappings(enum ipa_client_type client)
 	for (i = start; i <= end; i++) {
 		if (wdi_res[i].valid) {
 			for (j = 0; j < wdi_res[i].nents; j++) {
-				iommu_unmap(cb->iommu_domain,
+				ipa3_iommu_unmap(cb->iommu_domain,
 					wdi_res[i].res[j].iova,
 					wdi_res[i].res[j].size);
 				ipa3_ctx->wdi_map_cnt--;
@@ -784,7 +905,7 @@ static void ipa_release_uc_smmu_mappings(enum ipa_client_type client)
 	for (i = start; i <= end; i++) {
 		if (wdi_res[i].valid) {
 			for (j = 0; j < wdi_res[i].nents; j++) {
-				iommu_unmap(cb->iommu_domain,
+				ipa3_iommu_unmap(cb->iommu_domain,
 					wdi_res[i].res[j].iova,
 					wdi_res[i].res[j].size);
 				ipa3_ctx->wdi_map_cnt--;
@@ -936,7 +1057,7 @@ void ipa3_release_wdi3_gsi_smmu_mappings(u8 dir)
 	for (i = start; i <= end; i++) {
 		if (wdi_res[i].valid) {
 			for (j = 0; j < wdi_res[i].nents; j++) {
-				iommu_unmap(cb->iommu_domain,
+				ipa3_iommu_unmap(cb->iommu_domain,
 					wdi_res[i].res[j].iova,
 					wdi_res[i].res[j].size);
 				ipa3_ctx->wdi_map_cnt--;
@@ -1575,6 +1696,8 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	struct IpaHwWdiRxSetUpCmdData_t *rx;
 	struct IpaHwWdi2TxSetUpCmdData_t *tx_2;
 	struct IpaHwWdi2RxSetUpCmdData_t *rx_2;
+	struct ipa_smmu_cb_ctx *diag_ucb;
+	struct ipa_uc_wdi_pub pub = { 0 };
 
 	struct ipa_ep_cfg_ctrl ep_cfg_ctrl;
 	unsigned long va;
@@ -1791,6 +1914,33 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->u.dl_smmu.num_tx_buffers :
 				in->u.dl.num_tx_buffers;
 			tx_2->ipa_pipe_number = ipa_ep_idx;
+			pub.site = "wdi_tx_setup2";
+			pub.id = IPA_UC_WDI_PUB_TX2;
+			pub.opcode = IPA_CPU_2_HW_CMD_WDI_TX_SET_UP;
+			pub.v[0] = tx_2->comp_ring_base_pa_hi;
+			pub.v[1] = tx_2->comp_ring_base_pa;
+			pub.v[2] = tx_2->ce_ring_base_pa_hi;
+			pub.v[3] = tx_2->ce_ring_base_pa;
+			pub.v[4] = tx_2->ce_ring_doorbell_pa_hi;
+			pub.v[5] = tx_2->ce_ring_doorbell_pa;
+			IPA_WDI_DIAG("setup dir=tx wdi=2 op=%u ep=%d smmu=%d "
+				"cmd_dma=%016llx cmd_arg=%08x "
+				"comp=%08x:%08x csz=%u ce=%08x:%08x cesz=%u "
+				"db=%08x:%08x nbuf=%u pipe=%u\n",
+				IPA_CPU_2_HW_CMD_WDI_TX_SET_UP, ipa_ep_idx,
+				in->smmu_enabled,
+				(unsigned long long)cmd.phys_base,
+				(unsigned int)(u32)cmd.phys_base,
+				(unsigned int)tx_2->comp_ring_base_pa_hi,
+				(unsigned int)tx_2->comp_ring_base_pa,
+				(unsigned int)tx_2->comp_ring_size,
+				(unsigned int)tx_2->ce_ring_base_pa_hi,
+				(unsigned int)tx_2->ce_ring_base_pa,
+				(unsigned int)tx_2->ce_ring_size,
+				(unsigned int)tx_2->ce_ring_doorbell_pa_hi,
+				(unsigned int)tx_2->ce_ring_doorbell_pa,
+				(unsigned int)tx_2->num_tx_buffers,
+				(unsigned int)tx_2->ipa_pipe_number);
 		} else {
 			tx = (struct IpaHwWdiTxSetUpCmdData_t *)cmd.base;
 
@@ -1860,6 +2010,27 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->u.dl_smmu.num_tx_buffers :
 				in->u.dl.num_tx_buffers;
 			tx->ipa_pipe_number = ipa_ep_idx;
+			pub.site = "wdi_tx_setup";
+			pub.id = IPA_UC_WDI_PUB_TX;
+			pub.opcode = IPA_CPU_2_HW_CMD_WDI_TX_SET_UP;
+			pub.v[0] = tx->comp_ring_base_pa;
+			pub.v[1] = tx->ce_ring_base_pa;
+			pub.v[2] = tx->ce_ring_doorbell_pa;
+			IPA_WDI_DIAG("setup dir=tx wdi=1 op=%u ep=%d smmu=%d "
+				"cmd_dma=%016llx cmd_arg=%08x "
+				"comp=%08x csz=%u ce=%08x cesz=%u "
+				"db=%08x nbuf=%u pipe=%u\n",
+				IPA_CPU_2_HW_CMD_WDI_TX_SET_UP, ipa_ep_idx,
+				in->smmu_enabled,
+				(unsigned long long)cmd.phys_base,
+				(unsigned int)(u32)cmd.phys_base,
+				(unsigned int)tx->comp_ring_base_pa,
+				(unsigned int)tx->comp_ring_size,
+				(unsigned int)tx->ce_ring_base_pa,
+				(unsigned int)tx->ce_ring_size,
+				(unsigned int)tx->ce_ring_doorbell_pa,
+				(unsigned int)tx->num_tx_buffers,
+				(unsigned int)tx->ipa_pipe_number);
 		}
 		out->uc_door_bell_pa = ipa3_ctx->ipa_wrapper_base +
 				ipahal_get_reg_base() +
@@ -1962,6 +2133,36 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					rx_2->rx_comp_ring_wp_pa_hi,
 					rx_2->rx_comp_ring_wp_pa);
 			rx_2->ipa_pipe_number = ipa_ep_idx;
+			pub.site = "wdi_rx_setup2";
+			pub.id = IPA_UC_WDI_PUB_RX2;
+			pub.opcode = IPA_CPU_2_HW_CMD_WDI_RX_SET_UP;
+			pub.v[0] = rx_2->rx_ring_base_pa_hi;
+			pub.v[1] = rx_2->rx_ring_base_pa;
+			pub.v[2] = rx_2->rx_ring_rp_pa_hi;
+			pub.v[3] = rx_2->rx_ring_rp_pa;
+			pub.v[4] = rx_2->rx_comp_ring_base_pa_hi;
+			pub.v[5] = rx_2->rx_comp_ring_base_pa;
+			pub.v[6] = rx_2->rx_comp_ring_wp_pa_hi;
+			pub.v[7] = rx_2->rx_comp_ring_wp_pa;
+			IPA_WDI_DIAG("setup dir=rx wdi=2 op=%u ep=%d smmu=%d "
+				"cmd_dma=%016llx cmd_arg=%08x "
+				"rx=%08x:%08x rsz=%u rp=%08x:%08x "
+				"cr=%08x:%08x crsz=%u cwp=%08x:%08x pipe=%u\n",
+				IPA_CPU_2_HW_CMD_WDI_RX_SET_UP, ipa_ep_idx,
+				in->smmu_enabled,
+				(unsigned long long)cmd.phys_base,
+				(unsigned int)(u32)cmd.phys_base,
+				(unsigned int)rx_2->rx_ring_base_pa_hi,
+				(unsigned int)rx_2->rx_ring_base_pa,
+				(unsigned int)rx_2->rx_ring_size,
+				(unsigned int)rx_2->rx_ring_rp_pa_hi,
+				(unsigned int)rx_2->rx_ring_rp_pa,
+				(unsigned int)rx_2->rx_comp_ring_base_pa_hi,
+				(unsigned int)rx_2->rx_comp_ring_base_pa,
+				(unsigned int)rx_2->rx_comp_ring_size,
+				(unsigned int)rx_2->rx_comp_ring_wp_pa_hi,
+				(unsigned int)rx_2->rx_comp_ring_wp_pa,
+				(unsigned int)rx_2->ipa_pipe_number);
 		} else {
 			rx = (struct IpaHwWdiRxSetUpCmdData_t *)cmd.base;
 
@@ -2000,6 +2201,22 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 			}
 			rx->rx_ring_rp_pa = va;
 			rx->ipa_pipe_number = ipa_ep_idx;
+			pub.site = "wdi_rx_setup";
+			pub.id = IPA_UC_WDI_PUB_RX;
+			pub.opcode = IPA_CPU_2_HW_CMD_WDI_RX_SET_UP;
+			pub.v[0] = rx->rx_ring_base_pa;
+			pub.v[1] = rx->rx_ring_rp_pa;
+			IPA_WDI_DIAG("setup dir=rx wdi=1 op=%u ep=%d smmu=%d "
+				"cmd_dma=%016llx cmd_arg=%08x "
+				"rx=%08x rsz=%u rp=%08x pipe=%u\n",
+				IPA_CPU_2_HW_CMD_WDI_RX_SET_UP, ipa_ep_idx,
+				in->smmu_enabled,
+				(unsigned long long)cmd.phys_base,
+				(unsigned int)(u32)cmd.phys_base,
+				(unsigned int)rx->rx_ring_base_pa,
+				(unsigned int)rx->rx_ring_size,
+				(unsigned int)rx->rx_ring_rp_pa,
+				(unsigned int)rx->ipa_pipe_number);
 		}
 		out->uc_door_bell_pa = ipa3_ctx->ipa_wrapper_base +
 				ipahal_get_reg_base() +
@@ -2023,12 +2240,35 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 		ipa3_cfg_ep_ctrl(ipa_ep_idx, &ep_cfg_ctrl);
 	}
 
+	diag_ucb = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
+	ipa_wdi_diag_cache("connect", (u32)ipa_ep_idx);
+	IPA_WDI_DIAG("submit stage=connect op=%u ep=%d params=%08x "
+		"cmd_size=%llu ucnxt=%016llx ucstart=%016llx ucend=%016llx\n",
+		(unsigned int)(IPA_CLIENT_IS_CONS(in->sys.client) ?
+		IPA_CPU_2_HW_CMD_WDI_TX_SET_UP :
+		IPA_CPU_2_HW_CMD_WDI_RX_SET_UP), ipa_ep_idx,
+		(unsigned int)(u32)cmd.phys_base, (unsigned long long)cmd.size,
+		(unsigned long long)diag_ucb->next_addr,
+		(unsigned long long)diag_ucb->va_start,
+		(unsigned long long)diag_ucb->va_end);
+	IPA_WDI_DIAG("payload ep=%d len=%u %*ph\n", ipa_ep_idx,
+		(unsigned int)cmd.size, (int)cmd.size, cmd.base);
+
+	if (pub.site)
+		ipa3_uc_wdi_publish(&pub);
+
 	result = ipa3_uc_send_cmd((u32)(cmd.phys_base),
 				IPA_CLIENT_IS_CONS(in->sys.client) ?
 				IPA_CPU_2_HW_CMD_WDI_TX_SET_UP :
 				IPA_CPU_2_HW_CMD_WDI_RX_SET_UP,
 				IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
 				false, 10*HZ);
+
+	IPA_WDI_DIAG("setup_done dir=%s ep=%d op=%u rc=%d\n",
+		IPA_CLIENT_IS_CONS(in->sys.client) ? "tx" : "rx", ipa_ep_idx,
+		IPA_CLIENT_IS_CONS(in->sys.client) ?
+		IPA_CPU_2_HW_CMD_WDI_TX_SET_UP :
+		IPA_CPU_2_HW_CMD_WDI_RX_SET_UP, result);
 
 	if (result) {
 		result = -EFAULT;
@@ -2176,6 +2416,11 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 
 	tear.params.ipa_pipe_number = clnt_hdl;
 
+	ipa_wdi_diag_cache("tear", clnt_hdl);
+	IPA_WDI_DIAG("submit stage=tear op=%u pipe=%u params=%08x\n",
+		IPA_CPU_2_HW_CMD_WDI_TEAR_DOWN, clnt_hdl,
+		(unsigned int)tear.raw32b);
+
 	result = ipa3_uc_send_cmd(tear.raw32b,
 				IPA_CPU_2_HW_CMD_WDI_TEAR_DOWN,
 				IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2188,6 +2433,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 
 	ipa3_delete_dflt_flt_rules(clnt_hdl);
 	ipa_release_uc_smmu_mappings(ep->client);
+	ipa_wdi_diag_cache("tear_released", clnt_hdl);
 
 	memset(&ipa3_ctx->ep[clnt_hdl], 0, sizeof(struct ipa3_ep_context));
 
@@ -2360,6 +2606,13 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 	enable.params.ipa_pipe_number = clnt_hdl;
 
+	ipa_wdi_diag_cache("enable", clnt_hdl);
+	IPA_WDI_DIAG("submit stage=enable op=%u pipe=%u params=%08x\n",
+		IPA_CPU_2_HW_CMD_WDI_CH_ENABLE, clnt_hdl,
+		(unsigned int)enable.raw32b);
+	/* Once per boot: the headers the uC can reach when it starts walking. */
+	ipa3_dump_fltrt_hdrs("wdi_enable");
+	ipa_diag_enable(clnt_hdl);
 	result = ipa3_uc_send_cmd(enable.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_CH_ENABLE,
 		IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2482,6 +2735,10 @@ int ipa3_disable_wdi_pipe(u32 clnt_hdl)
 	}
 
 	disable.params.ipa_pipe_number = clnt_hdl;
+	ipa_wdi_diag_cache("disable", clnt_hdl);
+	IPA_WDI_DIAG("submit stage=disable op=%u pipe=%u params=%08x\n",
+		IPA_CPU_2_HW_CMD_WDI_CH_DISABLE, clnt_hdl,
+		(unsigned int)disable.raw32b);
 	result = ipa3_uc_send_cmd(disable.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_CH_DISABLE,
 		IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2613,6 +2870,10 @@ int ipa3_resume_wdi_pipe(u32 clnt_hdl)
 	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 	resume.params.ipa_pipe_number = clnt_hdl;
 
+	ipa_wdi_diag_cache("resume", clnt_hdl);
+	IPA_WDI_DIAG("submit stage=resume op=%u pipe=%u params=%08x\n",
+		IPA_CPU_2_HW_CMD_WDI_CH_RESUME, clnt_hdl,
+		(unsigned int)resume.raw32b);
 	result = ipa3_uc_send_cmd(resume.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_CH_RESUME,
 		IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2788,6 +3049,8 @@ int ipa3_suspend_wdi_pipe(u32 clnt_hdl)
 
 	suspend.params.ipa_pipe_number = clnt_hdl;
 
+	ipa_wdi_diag_cache("suspend", clnt_hdl);
+
 	if (IPA_CLIENT_IS_PROD(ep->client)) {
 		/*
 		 * For WDI 2.0 need to ensure pipe will be empty before suspend
@@ -2816,6 +3079,9 @@ int ipa3_suspend_wdi_pipe(u32 clnt_hdl)
 
 		IPADBG("Post suspend event first for IPA Producer\n");
 		IPADBG("Client: %d clnt_hdl: %d\n", ep->client, clnt_hdl);
+		IPA_WDI_DIAG("submit stage=suspend_prod op=%u pipe=%u "
+			"params=%08x\n", IPA_CPU_2_HW_CMD_WDI_CH_SUSPEND,
+			clnt_hdl, (unsigned int)suspend.raw32b);
 		result = ipa3_uc_send_cmd(suspend.raw32b,
 			IPA_CPU_2_HW_CMD_WDI_CH_SUSPEND,
 			IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2849,6 +3115,9 @@ int ipa3_suspend_wdi_pipe(u32 clnt_hdl)
 	}
 
 	if (IPA_CLIENT_IS_CONS(ep->client)) {
+		IPA_WDI_DIAG("submit stage=suspend_cons op=%u pipe=%u "
+			"params=%08x\n", IPA_CPU_2_HW_CMD_WDI_CH_SUSPEND,
+			clnt_hdl, (unsigned int)suspend.raw32b);
 		result = ipa3_uc_send_cmd(suspend.raw32b,
 			IPA_CPU_2_HW_CMD_WDI_CH_SUSPEND,
 			IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
@@ -2957,6 +3226,11 @@ int ipa3_write_qmapid_wdi_pipe(u32 clnt_hdl, u8 qmap_id)
 	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 	qmap.params.ipa_pipe_number = clnt_hdl;
 	qmap.params.qmap_id = qmap_id;
+
+	ipa_wdi_diag_cache("rx_ext_cfg", clnt_hdl);
+	IPA_WDI_DIAG("submit stage=rx_ext_cfg op=%u pipe=%u qmap=%u "
+		"params=%08x\n", IPA_CPU_2_HW_CMD_WDI_RX_EXT_CFG, clnt_hdl,
+		(unsigned int)qmap_id, (unsigned int)qmap.raw32b);
 
 	result = ipa3_uc_send_cmd(qmap.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_RX_EXT_CFG,
@@ -3129,7 +3403,7 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	for (i = 0; i < num_buffers; i++) {
 		IPADBG_LOW("i=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", i,
 			&info[i].pa, info[i].iova, info[i].size);
-		info[i].result = iommu_unmap(cb->iommu_domain,
+		info[i].result = ipa3_iommu_unmap(cb->iommu_domain,
 			rounddown(info[i].iova, PAGE_SIZE),
 			roundup(info[i].size + info[i].pa -
 				rounddown(info[i].pa, PAGE_SIZE), PAGE_SIZE));

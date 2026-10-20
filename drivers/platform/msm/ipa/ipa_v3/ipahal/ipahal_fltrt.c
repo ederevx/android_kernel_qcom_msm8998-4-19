@@ -7,6 +7,8 @@
 #include <linux/errno.h>
 #include <linux/ipc_logging.h>
 #include <linux/debugfs.h>
+#include <linux/iommu.h>
+#include "../ipa_diag.h"
 #include "ipahal.h"
 #include "ipahal_fltrt.h"
 #include "ipahal_fltrt_i.h"
@@ -3565,6 +3567,10 @@ int ipahal_fltrt_init(enum ipa_hw_type ipa_hw_type)
 	memset(mem->base, 0, mem->size);
 	IPAHAL_DBG("empty table allocated in system memory");
 
+	ipa_diag_alloc(ipahal_ctx->ipa_pdev,
+		iommu_get_domain_for_dev(ipahal_ctx->ipa_pdev),
+		mem->phys_base, mem->size, mem->base);
+
 	return 0;
 
 clear_empty_tbl:
@@ -3588,6 +3594,200 @@ void ipahal_fltrt_destroy(void)
 u32 ipahal_get_hw_tbl_hdr_width(void)
 {
 	return ipahal_fltrt_objs[ipahal_ctx->hw_type].tbl_hdr_width;
+}
+
+/* Get the base of the empty table every table header is initialised with */
+phys_addr_t ipahal_get_empty_fltrt_base(void)
+{
+	return ipahal_ctx->empty_fltrt_tbl.phys_base;
+}
+
+/*
+ * Round-12 tagging pool: one valid clone of the empty table per published
+ * header slot, allocated from the same device as the original so it lands in
+ * the same AP mapping, and kept until reboot. A slot is substituted only when
+ * its final decoded value is the original empty-table DMA address, and the
+ * value written is that clone's own DMA address through the HAL encoder.
+ */
+struct ipahal_diag_tag {
+	dma_addr_t dma;
+	void *cpu;
+	u32 slot;
+	s32 pipe;
+	u8 kind;
+	u8 ip;
+	u8 hashed;
+};
+
+static struct ipahal_diag_tag ipahal_diag_tags[IPA_DIAG_TAG_MAX];
+static u32 ipahal_diag_tags_used;
+static DEFINE_MUTEX(ipahal_diag_tags_lock);
+
+u32 ipahal_diag_tag_count(void)
+{
+	return READ_ONCE(ipahal_diag_tags_used);
+}
+
+dma_addr_t ipahal_diag_tag_addr(u32 idx)
+{
+	if (idx >= READ_ONCE(ipahal_diag_tags_used))
+		return 0;
+
+	return ipahal_diag_tags[idx].dma;
+}
+
+static struct ipahal_diag_tag *ipahal_diag_tag_find(u8 kind, u8 ip,
+	u8 hashed, s32 pipe, u32 slot)
+{
+	u32 i;
+
+	for (i = 0; i < ipahal_diag_tags_used; i++) {
+		struct ipahal_diag_tag *t = &ipahal_diag_tags[i];
+
+		if (t->kind == kind && t->ip == ip && t->hashed == hashed &&
+		    t->pipe == pipe && t->slot == slot)
+			return t;
+	}
+
+	return NULL;
+}
+
+/*
+ * Get, or allocate and initialise, the clone that tags one published slot.
+ * Returns NULL when no clone can be provided: the caller then leaves the whole
+ * image untagged and the run is reported invalid.
+ */
+static struct ipahal_diag_tag *ipahal_diag_tag_get(u8 kind, u8 ip,
+	u8 hashed, s32 pipe, u32 slot)
+{
+	struct ipahal_diag_tag *t;
+	size_t size = ipahal_ctx->empty_fltrt_tbl.size;
+	dma_addr_t dma;
+	void *cpu;
+
+	t = ipahal_diag_tag_find(kind, ip, hashed, pipe, slot);
+	if (t)
+		return t;
+
+	if (ipahal_diag_tags_used >= IPA_DIAG_TAG_MAX) {
+		ipa_diag_mark_invalid("tag_pool_exhausted");
+		return NULL;
+	}
+
+	cpu = dma_alloc_coherent(ipahal_ctx->ipa_pdev, size, &dma, GFP_KERNEL);
+	if (!cpu) {
+		ipa_diag_mark_invalid("tag_alloc_failed");
+		return NULL;
+	}
+
+	memcpy(cpu, ipahal_ctx->empty_fltrt_tbl.base, size);
+
+	t = &ipahal_diag_tags[ipahal_diag_tags_used];
+	t->dma = dma;
+	t->cpu = cpu;
+	t->kind = kind;
+	t->ip = ip;
+	t->hashed = hashed;
+	t->pipe = pipe;
+	t->slot = slot;
+	ipahal_diag_tags_used++;
+
+	return t;
+}
+
+/*
+ * ipahal_diag_tag_img() - substitute per-slot clones into a final header image
+ * @kind: rt or flt image
+ * @ip: IP family the image was built for
+ * @hashed: hashable (true) or non-hashable image
+ * @pipe: hardware pipe for filtering images, -1 for routing
+ * @first_slot: header index of @base within the submitted image
+ * @base: CPU address of the coherent image that will be submitted
+ * @dma: DMA address of @base
+ * @slots: number of header slots covered by @base
+ * @generation: publication generation this image belongs to
+ * @local_offset: IPA local address the first slot is copied to
+ * @tagged: OUT, number of slots substituted
+ *
+ * Two passes: every needed clone is allocated first, so a failure leaves the
+ * submitted image untouched instead of partially tagged. Returns 0 when the
+ * image is fully tagged or had no eligible slot, negative when the run must be
+ * reported invalid.
+ */
+int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
+	u32 first_slot, void *base, dma_addr_t dma, u32 slots, u64 generation,
+	u32 local_offset, u32 *tagged)
+{
+	struct ipahal_fltrt_obj *obj = &ipahal_fltrt_objs[ipahal_ctx->hw_type];
+	phys_addr_t empty;
+	u32 i, width;
+	int ret = 0;
+
+	*tagged = 0;
+	if (!base || !slots || !obj->parse_tbl_addr || !obj->create_tbl_addr ||
+	    !obj->write_val_to_hdr || !ipahal_ctx->empty_fltrt_tbl.base)
+		return 0;
+
+	empty = ipahal_ctx->empty_fltrt_tbl.phys_base;
+	width = obj->tbl_hdr_width;
+
+	mutex_lock(&ipahal_diag_tags_lock);
+
+	for (i = 0; i < slots; i++) {
+		u8 *hdr = (u8 *)base + i * width;
+		u64 raw, addr;
+		bool is_sys;
+
+		raw = *(u64 *)hdr;
+		obj->parse_tbl_addr(raw, &addr, &is_sys);
+		if (!is_sys || addr != empty)
+			continue;
+
+		if (!ipahal_diag_tag_get(kind, ip, hashed, pipe,
+					first_slot + i)) {
+			ret = -ENOMEM;
+			goto out;
+		}
+	}
+
+	for (i = 0; i < slots; i++) {
+		u8 *hdr = (u8 *)base + i * width;
+		struct ipahal_diag_tag *t;
+		u64 raw, sent, addr;
+		bool is_sys;
+
+		raw = *(u64 *)hdr;
+		obj->parse_tbl_addr(raw, &addr, &is_sys);
+		if (!is_sys || addr != empty)
+			continue;
+
+		t = ipahal_diag_tag_find(kind, ip, hashed, pipe,
+					first_slot + i);
+		if (!t || (t->dma & obj->sysaddr_alignment)) {
+			ipa_diag_mark_invalid("tag_unencodable");
+			ret = -EINVAL;
+			break;
+		}
+
+		obj->write_val_to_hdr(obj->create_tbl_addr(true, t->dma), hdr);
+		sent = *(u64 *)hdr;
+		obj->parse_tbl_addr(sent, &addr, &is_sys);
+		if (!is_sys || addr != (u64)t->dma) {
+			ipa_diag_mark_invalid("tag_readback");
+			ret = -EIO;
+			break;
+		}
+
+		ipa_diag_tag(kind, ip, hashed, pipe, first_slot + i,
+			generation, dma, i * width,
+			local_offset + i * width, raw, sent, addr, t->dma,
+			true);
+		(*tagged)++;
+	}
+
+out:
+	mutex_unlock(&ipahal_diag_tags_lock);
+	return ret;
 }
 
 /* Get the H/W local table (SRAM) address alignment

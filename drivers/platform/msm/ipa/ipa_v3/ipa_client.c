@@ -352,7 +352,7 @@ int ipa3_smmu_map_peer_reg(phys_addr_t phys_addr, bool map,
 		res = ipa3_iommu_map(smmu_domain, phys_addr, phys_addr,
 			PAGE_SIZE, IOMMU_READ | IOMMU_WRITE | IOMMU_MMIO);
 	} else {
-		res = iommu_unmap(smmu_domain, phys_addr, PAGE_SIZE);
+		res = ipa3_iommu_unmap(smmu_domain, phys_addr, PAGE_SIZE);
 		res = (res != PAGE_SIZE);
 	}
 	if (res) {
@@ -431,7 +431,7 @@ int ipa3_smmu_map_peer_buff(u64 iova, u32 size, bool map, struct sg_table *sgt,
 			}
 		}
 	} else {
-		res = iommu_unmap(smmu_domain,
+		res = ipa3_iommu_unmap(smmu_domain,
 		rounddown(iova, PAGE_SIZE),
 		roundup(size + iova - rounddown(iova, PAGE_SIZE),
 		PAGE_SIZE));

@@ -6,6 +6,8 @@
 #ifndef _IPAHAL_FLTRT_H_
 #define _IPAHAL_FLTRT_H_
 
+#include "../ipa_diag.h"
+
 /*
  * struct ipahal_fltrt_alloc_imgs_params - Params for tbls imgs allocations
  *  The allocation logic will allocate DMA memory representing the header.
@@ -133,6 +135,16 @@ struct ipahal_flt_rule_entry {
 
 /* Get the H/W table (flt/rt) header width */
 u32 ipahal_get_hw_tbl_hdr_width(void);
+
+/* Get the base of the empty table every table header is initialised with */
+phys_addr_t ipahal_get_empty_fltrt_base(void);
+
+/* Round-12 per-slot coherent clones used to tag published header slots */
+u32 ipahal_diag_tag_count(void);
+dma_addr_t ipahal_diag_tag_addr(u32 idx);
+int ipahal_diag_tag_img(enum ipa_diag_kind kind, u8 ip, u8 hashed, s32 pipe,
+	u32 first_slot, void *base, dma_addr_t dma, u32 slots, u64 generation,
+	u32 local_offset, u32 *tagged);
 
 /* Get the H/W local table (SRAM) address alignment
  * Tables headers references to local tables via offsets in SRAM

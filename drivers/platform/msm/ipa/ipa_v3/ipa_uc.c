@@ -648,6 +648,10 @@ fail:
 	return NOTIFY_DONE;
 }
 
+/* Diagnostic only, same tag as ipa_uc_wdi.c; see the note there. */
+#define IPA_WDI_DIAG(fmt, ...) \
+	pr_err("IPA_WDI_DIAG: " fmt, ##__VA_ARGS__)
+
 static void ipa3_uc_response_hdlr(enum ipa_irq_type interrupt,
 				void *private_data,
 				void *interrupt_data)
@@ -728,6 +732,12 @@ static void ipa3_uc_response_hdlr(enum ipa_irq_type interrupt,
 		IPADBG("uC cmd response opcode=%u status=%u\n",
 		       uc_rsp.params.originalCmdOp,
 		       uc_rsp.params.status);
+		IPA_WDI_DIAG("ucrsp pending=%u op=%u status=%u data=%u "
+			"raw=%08x\n", ipa3_ctx->uc_ctx.pending_cmd,
+			(unsigned int)uc_rsp.params.originalCmdOp,
+			(unsigned int)uc_rsp.params.status,
+			(unsigned int)uc_rsp.params.responseData,
+			(unsigned int)uc_rsp.raw32b);
 		if (uc_rsp.params.originalCmdOp ==
 		    ipa3_ctx->uc_ctx.pending_cmd) {
 			ipa3_ctx->uc_ctx.uc_status = uc_rsp.params.status;

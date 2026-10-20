@@ -41,23 +41,31 @@ together with that commit.
 
 ## Preparation
 
-Run from the kernel tree root, on a clean tree:
+Run from the kernel tree root, on a clean tree. The clone is destructive by
+design: the driver must be fresh, so any earlier checkout is removed first.
+Every step after it is guarded or idempotent and is safe to re-run on a tree that
+is already prepared.
 
 ```sh
+rm -rf KernelSU-Next
 git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
 git -C KernelSU-Next checkout --detach 465490a26667ba4cf00b3be975a7e28e53978829
 git -C KernelSU-Next rev-parse HEAD          # must print the pin
 git -C KernelSU-Next status --porcelain      # must print nothing
-cd patches/kernelsu-next && sha256sum -c SHA256SUMS && cd ../..
-git -C KernelSU-Next apply --check "$PWD/patches/kernelsu-next/0001-susfs-glue.patch"
-git -C KernelSU-Next apply "$PWD/patches/kernelsu-next/0001-susfs-glue.patch"
-ln -s ../KernelSU-Next/kernel drivers/kernelsu
+(cd patches/kernelsu-next && sha256sum -c SHA256SUMS)
+if git -C KernelSU-Next apply --reverse --check "$PWD/patches/kernelsu-next/0001-susfs-glue.patch" 2>/dev/null; then
+        echo "glue already applied"
+else
+        git -C KernelSU-Next apply --check "$PWD/patches/kernelsu-next/0001-susfs-glue.patch"
+        git -C KernelSU-Next apply "$PWD/patches/kernelsu-next/0001-susfs-glue.patch"
+fi
+[ -e drivers/kernelsu ] || { rm -f drivers/kernelsu; ln -s ../KernelSU-Next/kernel drivers/kernelsu; }
 ~/scripts/build_kernel -s msm8998-4-19 -b msm8998-oneplus-k -k -p
 ```
 
 The sanctioned build does not apply the glue itself: `build_kernel` only adds
 `KSU_DEFINED=1` to the make variables and never clones, resets, or patches the
 driver checkout, so a prepared checkout is an input to the build, not something
-the build produces. Rerunning preparation requires a fresh clean checkout -
-`git clone` into an existing directory fails and `git apply` refuses an
-already-patched tree, so remove `KernelSU-Next/` first rather than reusing it.
+the build produces. Re-running the recipe never reuses a patched tree: the
+checkout is replaced, the apply is skipped when the glue is already in place,
+and the symlink is only created when it is absent.

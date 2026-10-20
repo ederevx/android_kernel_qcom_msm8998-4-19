@@ -98,7 +98,10 @@ arch/*/include/generated
 patches-*
 
 # quilt's files
-patches
+!/patches/
+/patches/*
+!/patches/kernelsu-next/
+!/patches/kernelsu-next/*.patch
 series
 
 # cscope files

@@ -5,6 +5,13 @@ checkout that the tree reaches through the gitignored `drivers/kernelsu`
 symlink, so driver sources are not committed here. What the tree does require
 is the glue below: the SUSFS integration the driver lacks at the pinned commit.
 
+## Status
+
+This integration is provisional and experimental. Local device validation does
+not establish upstream support for this KernelSU-Next and SUSFS pairing: neither
+the driver glue nor the 4.19 SUSFS host implementation is certified by
+KernelSU-Next or by the SUSFS project.
+
 ## Provenance
 
 - Driver: <https://github.com/KernelSU-Next/KernelSU-Next>, pinned at

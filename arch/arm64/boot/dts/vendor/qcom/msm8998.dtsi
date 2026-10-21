@@ -3237,7 +3237,7 @@
 			     <0 424 IRQ_TYPE_LEVEL_HIGH /* CE10 */ >,
 			     <0 425 IRQ_TYPE_LEVEL_HIGH /* CE11 */ >;
 		qcom,iommu-dma-addr-pool = <0xa0000000 0x10000000>;
-		qcom,iommu-dma = "fastmap";
+		qcom,iommu-dma = "bypass";
 		qcom,iommu-faults = "stall-disable";
 		qcom,hyp_enabled;
 		qcom,wlan-msa-memory = <0x100000>;

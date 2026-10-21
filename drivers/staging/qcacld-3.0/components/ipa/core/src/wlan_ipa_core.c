@@ -404,7 +404,7 @@ static inline void wlan_ipa_wdi_get_wdi_version(struct wlan_ipa_priv *ipa_ctx)
 static inline bool wlan_ipa_wdi_is_smmu_enabled(struct wlan_ipa_priv *ipa_ctx,
 					       qdf_device_t osdev)
 {
-	return ipa_ctx->is_smmu_enabled && qdf_mem_smmu_s1_enabled(osdev);
+	return ipa_ctx->is_smmu_enabled;
 }
 
 static inline QDF_STATUS

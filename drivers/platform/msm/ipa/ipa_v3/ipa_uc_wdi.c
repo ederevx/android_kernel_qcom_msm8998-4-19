@@ -1241,8 +1241,11 @@ int ipa3_connect_gsi_wdi_pipe(struct ipa_wdi_in_params *in,
 	u32 gsi_db_reg_phs_addr_lsb;
 	u32 gsi_db_reg_phs_addr_msb;
 
+	ipa3_diag_ep_map(in->sys.client, "connect-pre");
 	ipa_ep_idx = ipa3_get_ep_mapping(in->sys.client);
 	if (ipa_ep_idx == -1) {
+		pr_err("IPA17 EPMAP tag=alloc-failed client=%d ret=%d\n",
+			(int)in->sys.client, ipa_ep_idx);
 		IPAERR("fail to alloc EP.\n");
 		goto fail;
 	}

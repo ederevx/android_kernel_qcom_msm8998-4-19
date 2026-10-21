@@ -1845,15 +1845,13 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				((u64)tx_2->ce_ring_doorbell_pa_hi << 32) |
 				tx_2->ce_ring_doorbell_pa);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_TX_RING_RES,
-				(u64)(in->u.dl_smmu.comp_ring.sgl ?
-				sg_dma_address(in->u.dl_smmu.comp_ring.sgl) : 0),
+				(u64)(uintptr_t)in->u.dl_smmu.comp_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)tx_2->comp_ring_base_pa_hi << 32) |
 				tx_2->comp_ring_base_pa,
 				in->u.dl_smmu.comp_ring_size);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_CE_RING_RES,
-				(u64)(in->u.dl_smmu.ce_ring.sgl ?
-				sg_dma_address(in->u.dl_smmu.ce_ring.sgl) : 0),
+				(u64)(uintptr_t)in->u.dl_smmu.ce_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)tx_2->ce_ring_base_pa_hi << 32) |
 				tx_2->ce_ring_base_pa,
@@ -2083,8 +2081,7 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				((u64)rx_2->rx_comp_ring_wp_pa_hi << 32) |
 				rx_2->rx_comp_ring_wp_pa);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_RX_RING_RES,
-				(u64)(in->u.ul_smmu.rdy_ring.sgl ?
-				sg_dma_address(in->u.ul_smmu.rdy_ring.sgl) : 0),
+				(u64)(uintptr_t)in->u.ul_smmu.rdy_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_ring_base_pa_hi << 32) |
 				rx_2->rx_ring_base_pa,
@@ -2096,8 +2093,7 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				rx_2->rx_ring_rp_pa, 4);
 			ipa_diag_wlanaddr(ipa_ep_idx,
 				IPA_WDI_RX_COMP_RING_RES,
-				(u64)(in->u.ul_smmu.rdy_comp_ring.sgl ?
-				sg_dma_address(in->u.ul_smmu.rdy_comp_ring.sgl) : 0),
+				(u64)(uintptr_t)in->u.ul_smmu.rdy_comp_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_comp_ring_base_pa_hi << 32) |
 				rx_2->rx_comp_ring_base_pa,

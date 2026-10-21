@@ -424,6 +424,7 @@ struct htt_pdev_t {
 	struct htt_ipa_uc_tx_resource_t ipa_uc_tx_rsc;
 	struct htt_ipa_uc_rx_resource_t ipa_uc_rx_rsc;
 	int is_ipa_uc_enabled;
+	bool ipa_wdi_smmu_enabled;
 
 	struct htt_tx_credit_t htt_tx_credit;
 

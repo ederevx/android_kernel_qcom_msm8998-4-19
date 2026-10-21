@@ -3262,8 +3262,6 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	}
 
 	for (i = 0; i < num_buffers; i++) {
-		ipa_diag_wlanmap(-1, (u64)info[i].iova, 0, 0,
-			(u32)info[i].size, 0, 0);
 		IPADBG_LOW("i=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", i,
 			&info[i].pa, info[i].iova, info[i].size);
 		info[i].result = ipa3_iommu_map(cb->iommu_domain,
@@ -3272,7 +3270,18 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 			roundup(info[i].size + info[i].pa -
 				rounddown(info[i].pa, PAGE_SIZE), PAGE_SIZE),
 			prot);
+		if (info[i].result) {
+			ipa_diag_wlanmap(-1, (u64)info[i].pa, 1,
+				(u64)info[i].iova, (u32)info[i].size,
+				info[i].result, 0);
+			if (!ret)
+				ret = info[i].result;
+		}
 	}
+
+	if (!ret && num_buffers)
+		ipa_diag_wlanmap(-1, (u64)info[0].pa, 1,
+			(u64)info[0].iova, (u32)info[0].size, 0, 0);
 
 	return ret;
 }

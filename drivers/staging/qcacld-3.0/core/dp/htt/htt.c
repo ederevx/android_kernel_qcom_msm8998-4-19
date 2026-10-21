@@ -502,8 +502,11 @@ htt_attach(struct htt_pdev_t *pdev, int desc_pool_size)
 	int ret = 0;
 
 	pdev->is_ipa_uc_enabled = false;
-	if (ol_cfg_ipa_uc_offload_enabled(pdev->ctrl_pdev))
+	pdev->ipa_wdi_smmu_enabled = false;
+	if (ol_cfg_ipa_uc_offload_enabled(pdev->ctrl_pdev)) {
 		pdev->is_ipa_uc_enabled = true;
+		htt_ipa_uc_smmu_init(pdev);
+	}
 
 	pdev->new_htt_format_enabled = false;
 	if (ol_cfg_is_htt_new_format_enabled(pdev->ctrl_pdev))

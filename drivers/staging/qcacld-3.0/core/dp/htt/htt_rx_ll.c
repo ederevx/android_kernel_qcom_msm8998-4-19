@@ -379,7 +379,7 @@ static int htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
 
 	idx = *pdev->rx_ring.alloc_idx.vaddr;
 
-	if (qdf_mem_smmu_s1_enabled(pdev->osdev) && pdev->is_ipa_uc_enabled &&
+	if (htt_ipa_uc_smmu_enabled(pdev) &&
 	    pdev->rx_ring.smmu_map)
 		ipa_smmu = true;
 
@@ -1310,7 +1310,7 @@ static void htt_rx_hash_deinit(struct htt_pdev_t *pdev)
 	if (!pdev->rx_ring.hash_table)
 		return;
 
-	if (qdf_mem_smmu_s1_enabled(pdev->osdev) && pdev->is_ipa_uc_enabled &&
+	if (htt_ipa_uc_smmu_enabled(pdev) &&
 	    pdev->rx_ring.smmu_map)
 		ipa_smmu = true;
 
@@ -1431,7 +1431,7 @@ htt_rx_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 	msdu_count = HTT_RX_IN_ORD_PADDR_IND_MSDU_CNT_GET(*(msg_word + 1));
 	HTT_RX_CHECK_MSDU_COUNT(msdu_count);
 
-	if (qdf_mem_smmu_s1_enabled(pdev->osdev) && pdev->is_ipa_uc_enabled &&
+	if (htt_ipa_uc_smmu_enabled(pdev) &&
 	    pdev->rx_ring.smmu_map)
 		ipa_smmu = true;
 
@@ -2181,7 +2181,7 @@ void htt_rx_detach(struct htt_pdev_t *pdev)
 	qdf_timer_free(&pdev->rx_ring.refill_retry_timer);
 	htt_rx_dbg_rxbuf_deinit(pdev);
 
-	if (qdf_mem_smmu_s1_enabled(pdev->osdev) && pdev->is_ipa_uc_enabled &&
+	if (htt_ipa_uc_smmu_enabled(pdev) &&
 	    pdev->rx_ring.smmu_map)
 		ipa_smmu = true;
 
@@ -2300,7 +2300,7 @@ QDF_STATUS htt_rx_update_smmu_map(struct htt_pdev_t *pdev, bool map)
 	if (!pdev->rx_ring.hash_table)
 		return QDF_STATUS_SUCCESS;
 
-	if (!qdf_mem_smmu_s1_enabled(pdev->osdev) || !pdev->is_ipa_uc_enabled)
+	if (!htt_ipa_uc_smmu_enabled(pdev))
 		return QDF_STATUS_SUCCESS;
 
 	qdf_spin_lock_bh(&pdev->rx_ring.refill_lock);

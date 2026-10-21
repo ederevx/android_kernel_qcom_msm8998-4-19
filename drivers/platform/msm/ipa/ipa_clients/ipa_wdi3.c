@@ -9,6 +9,7 @@
 #include "../ipa_common_i.h"
 #include "../ipa_v3/ipa_pm.h"
 #include "../ipa_v3/ipa_i.h"
+#include "../ipa_v3/ipa_diag.h"
 
 #define OFFLOAD_DRV_NAME "ipa_wdi"
 #define IPA_WDI_DBG(fmt, args...) \
@@ -123,6 +124,7 @@ int ipa_wdi_init(struct ipa_wdi_init_in_params *in,
 	else
 		out->is_over_gsi = false;
 #endif
+	ipa_diag_wlanstate(out->is_smmu_enabled, out->is_over_gsi);
 	return 0;
 }
 EXPORT_SYMBOL(ipa_wdi_init);

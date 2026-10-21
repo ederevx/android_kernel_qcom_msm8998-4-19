@@ -7,7 +7,6 @@
 #include <linux/bitops.h>
 #include <linux/idr.h>
 #include "ipa_i.h"
-#include "ipa_diag.h"
 #include "ipahal/ipahal.h"
 #include "ipahal/ipahal_fltrt.h"
 
@@ -473,9 +472,6 @@ int __ipa_commit_rt_v3(enum ipa_ip_type ip)
 	struct ipahal_fltrt_alloc_imgs_params alloc_params;
 	u32 num_modem_rt_index;
 	int rc = 0;
-	u64 gen;
-	u32 nhash_slots = 0, hash_slots = 0;
-	u32 nhash_tagged = 0, hash_tagged = 0;
 	u32 lcl_hash_hdr, lcl_nhash_hdr;
 	u32 lcl_hash_bdy, lcl_nhash_bdy;
 	bool lcl_hash, lcl_nhash;
@@ -575,26 +571,6 @@ int __ipa_commit_rt_v3(enum ipa_ip_type ip)
 		rc = -EFAULT;
 		goto fail_size_valid;
 	}
-
-	/*
-	 * Tag every eligible slot of both images before any command is built,
-	 * so the bytes recorded are the bytes the submission covers.
-	 */
-	gen = ipa_diag_next_gen();
-	nhash_slots = alloc_params.nhash_hdr.size /
-		ipahal_get_hw_tbl_hdr_width();
-	hash_slots = alloc_params.hash_hdr.size /
-		ipahal_get_hw_tbl_hdr_width();
-	if (ipahal_diag_tag_img(IPA_DIAG_RT, ip, false, -1, 0,
-			alloc_params.nhash_hdr.base,
-			alloc_params.nhash_hdr.phys_base, nhash_slots, gen,
-			lcl_nhash_hdr, &nhash_tagged))
-		IPAERR("rt nhash header tagging incomplete IP %d\n", ip);
-	if (ipahal_diag_tag_img(IPA_DIAG_RT, ip, true, -1, 0,
-			alloc_params.hash_hdr.base,
-			alloc_params.hash_hdr.phys_base, hash_slots, gen,
-			lcl_hash_hdr, &hash_tagged))
-		IPAERR("rt hash header tagging incomplete IP %d\n", ip);
 
 	/* IC to close the coal frame before HPS Clear if coal is enabled */
 	if (ipa3_get_ep_mapping(IPA_CLIENT_APPS_WAN_COAL_CONS) != -1) {
@@ -736,25 +712,8 @@ int __ipa_commit_rt_v3(enum ipa_ip_type ip)
 	if (ipa3_send_cmd(num_cmd, desc)) {
 		IPAERR_RL("fail to send immediate command\n");
 		rc = -EFAULT;
-		ipa_diag_pub(gen, IPA_DIAG_RT, ip, false,
-			alloc_params.nhash_hdr.phys_base, lcl_nhash_hdr,
-			alloc_params.nhash_hdr.size, nhash_slots, nhash_tagged,
-			rc, false);
-		ipa_diag_pub(gen, IPA_DIAG_RT, ip, true,
-			alloc_params.hash_hdr.phys_base, lcl_hash_hdr,
-			alloc_params.hash_hdr.size, hash_slots, hash_tagged,
-			rc, false);
 		goto fail_imm_cmd_construct;
 	}
-
-	ipa_diag_pub(gen, IPA_DIAG_RT, ip, false,
-		alloc_params.nhash_hdr.phys_base, lcl_nhash_hdr,
-		alloc_params.nhash_hdr.size, nhash_slots, nhash_tagged, 0, true);
-	if (hash_slots)
-		ipa_diag_pub(gen, IPA_DIAG_RT, ip, true,
-			alloc_params.hash_hdr.phys_base, lcl_hash_hdr,
-			alloc_params.hash_hdr.size, hash_slots, hash_tagged, 0,
-			true);
 
 	IPADBG_LOW("Hashable HEAD\n");
 	IPA_DUMP_BUFF(alloc_params.hash_hdr.base,

@@ -3092,15 +3092,6 @@ int ipa3_diag_alias_map(struct iommu_domain *domain, unsigned long original,
 	phys_addr_t pa, size_t len, int prot, u32 object);
 int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	size_t size);
-void ipa3_audit_map(const char *dom, u32 domid, unsigned long iova,
-	phys_addr_t pa, size_t size, int prot, int ret,
-	unsigned long caller);
-void ipa3_audit_unmap(const char *dom, u32 domid, unsigned long iova,
-	size_t requested, size_t unmapped, unsigned long caller);
-void ipa3_audit_attach(const char *dom, u32 domid, u32 sid, bool attach);
-u32 ipa3_audit_map_skipped_count(void);
-void ipa3_uc_wdi_publish_report(unsigned int cb, unsigned long iova, u32 fsr);
-void ipa3_dump_fltrt_hdrs(const char *when);
 int ipa3_ap_suspend(struct device *dev);
 int ipa3_ap_resume(struct device *dev);
 int ipa3_init_interrupts(void);

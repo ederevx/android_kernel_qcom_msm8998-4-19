@@ -42,7 +42,6 @@
 #include <linux/io-64-nonatomic-hi-lo.h>
 #include <linux/iommu.h>
 #include <linux/io-pgtable.h>
-#include <linux/io-pgtable-fast.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -2030,184 +2029,12 @@ int iommu_get_fault_ids(struct iommu_domain *domain,
 EXPORT_SYMBOL(iommu_get_fault_ids);
 
 #if IS_ENABLED(CONFIG_IPA)
-void ipa3_uc_wdi_publish_report(unsigned int cb, unsigned long iova, u32 fsr);
-
-static void arm_smmu_ipa_publish_report(unsigned int cb, unsigned long iova,
-	u32 fsr)
-{
-	ipa3_uc_wdi_publish_report(cb, iova, fsr);
-}
-#else
-static void arm_smmu_ipa_publish_report(unsigned int cb, unsigned long iova,
-	u32 fsr)
-{
-}
-#endif
-
-#if IS_ENABLED(CONFIG_IPA)
 void ipa3_diag_smmu_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 	u32 fsynr0, u32 fsynr1, u32 cbfrsynra, int smr_idx, int report_ret);
-
-int arm_smmu_domain_cbndx(struct iommu_domain *domain)
-{
-	if (!domain || domain->ops != &arm_smmu_ops)
-		return -1;
-
-	return to_smmu_domain(domain)->cfg.cbndx;
-}
-
-/*
- * Round-12: a new diagnostic built on the existing av8l_fast walk mechanism -
- * it repeats that walk read-only and keeps every descriptor it consumed. The
- * page tables are read through the io-pgtable-fast accessors, not a hand-rolled
- * __va(TTBR) walk.
- */
-void arm_smmu_iova_walk_domain(struct iommu_domain *domain, unsigned long iova,
-	unsigned int stage, unsigned int cb)
-{
-	struct arm_smmu_domain *smmu_domain;
-	struct arm_smmu_cb *hwcb;
-	struct av8l_fast_walk walk;
-	int i, ret;
-
-	if (!domain || domain->ops != &arm_smmu_ops)
-		return;
-
-	smmu_domain = to_smmu_domain(domain);
-	hwcb = smmu_domain->smmu->cbs ?
-		&smmu_domain->smmu->cbs[smmu_domain->cfg.cbndx] : NULL;
-	if (!smmu_domain->pgtbl_ops) {
-		pr_err("IPA17 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=no-pgtbl\n",
-			stage, cb, (void *)domain, iova);
-		return;
-	}
-
-	ret = av8l_fast_iova_walk_public(smmu_domain->pgtbl_ops, iova, &walk);
-	if (ret) {
-		pr_err("IPA17 WALK stage=%u cb=%u domain=%px iova=%#lx unavailable=%d\n",
-			stage, cb, (void *)domain, iova, ret);
-		return;
-	}
-
-	for (i = 0; i < walk.n; i++)
-		pr_err("IPA17 WALK stage=%u cb=%u domain=%px iova=%#lx ttbr0=%016llx ttbr1=%016llx tcr=%#x level=%u table_pa=%#llx index=%u desc=%016llx terminal=%u\n",
-			stage, cb, (void *)domain, iova,
-			hwcb ? hwcb->ttbr[0] : 0, hwcb ? hwcb->ttbr[1] : 0,
-			hwcb ? hwcb->tcr[0] : 0,
-			walk.level[i], walk.table[i], walk.index[i],
-			walk.desc[i], walk.terminal[i]);
-}
-
-/*
- * The SMR that matches the reported SID, from the driver's own stream map.
- * A context-bank assignment is not a requester identity: this only reports
- * which configured stream selected the faulting context.
- */
-static int arm_smmu_ipa_match_smr(struct arm_smmu_device *smmu, u16 sid,
-	u16 *sid_mask)
-{
-	int i;
-
-	*sid_mask = 0;
-	for (i = 0; smmu->smrs && i < smmu->num_mapping_groups; i++) {
-		struct arm_smmu_smr *smr = &smmu->smrs[i];
-
-		if (!smr->valid)
-			continue;
-		if ((smr->id ^ sid) & ~smr->mask) {
-			*sid_mask = smr->mask;
-			return i;
-		}
-	}
-
-	return -1;
-}
-
-static void arm_smmu_ipa_fault(u8 cbndx, u16 sid, u16 sid_mask, u64 far,
-	u32 fsr, u32 fsynr0, u32 fsynr1, int smr_idx, int report_ret)
-{
-	ipa3_diag_smmu_fault(cbndx, sid, sid_mask, far, fsr, fsynr0, fsynr1,
-		sid, smr_idx, report_ret);
-}
-
-static void arm_smmu_ipa_requester(struct arm_smmu_device *smmu, u8 cbndx,
-	u16 sid, u32 fsr, u32 fsynr0, u32 fsynr1, u32 cbfrsynra,
-	int *smr_idx, u16 *sid_mask)
-{
-	struct arm_smmu_s2cr *s2cr;
-	int idx;
-
-	idx = arm_smmu_ipa_match_smr(smmu, sid, sid_mask);
-	*smr_idx = idx;
-	s2cr = (idx >= 0 && smmu->s2crs) ? &smmu->s2crs[idx] : NULL;
-
-	pr_err("IPA17 REQUESTER smmu=%s cb=%u sid_raw=%#x sid_mask=%#x fsr=%#x fsynr0=%#x fsynr1=%#x cbfrsynra=%#x\n",
-		dev_name(smmu->dev), cbndx, sid, *sid_mask, fsr, fsynr0,
-		fsynr1, cbfrsynra);
-	pr_err("IPA17 REQUESTER_DECODED cb=%u smr=%d tf=%u pf=%u ef=%u ss=%u wnr=%u pnu=%u ind=%u bid=%#x pid=%#x mid=%#x s2cr_type=%u s2cr_cb=%d\n",
-		cbndx, idx, !!(fsr & FSR_TF), !!(fsr & FSR_PF),
-		!!(fsr & FSR_EF), !!(fsr & FSR_SS), !!(fsynr0 & FSYNR0_WNR),
-		!!(fsynr0 & FSYNR0_PNU), !!(fsynr0 & FSYNR0_IND),
-		FIELD_GET(FSYNR1_BID, fsynr1), FIELD_GET(FSYNR1_PID, fsynr1),
-		FIELD_GET(FSYNR1_MID, fsynr1),
-		s2cr ? (u32)s2cr->type : 0, s2cr ? (int)s2cr->cbndx : -1);
-}
-
-/*
- * IPA17 STREAM: the configured match/route pair of the IPA UC device, taken
- * once per attach from the driver's stream map before the WDI enable path runs.
- */
-static void arm_smmu_ipa_stream(struct device *dev,
-	struct iommu_fwspec *fwspec, struct arm_smmu_device *smmu, u8 cbndx)
-{
-	int i, idx;
-
-	if (!fwspec || !strstr(dev_name(dev), "ipa_smmu_uc"))
-		return;
-
-	for_each_cfg_sme(fwspec, i, idx) {
-		u16 sid = fwspec->ids[i];
-		u16 mask = fwspec->ids[i] >> SMR_MASK_SHIFT;
-		u32 match_raw = 0, route_raw = 0;
-		u32 s2cr_cb = cbndx;
-
-		if (idx >= 0 && smmu->smrs && smmu->s2crs) {
-			match_raw = SMR_VALID |
-				(smmu->smrs[idx].id << SMR_ID_SHIFT) |
-				((u32)smmu->smrs[idx].mask << SMR_MASK_SHIFT);
-			route_raw =
-				((u32)smmu->s2crs[idx].type << S2CR_TYPE_SHIFT) |
-				((u32)smmu->s2crs[idx].cbndx << S2CR_CBNDX_SHIFT);
-			s2cr_cb = smmu->s2crs[idx].cbndx;
-		}
-
-		pr_err("IPA17 STREAM smmu=%s index=%d match_raw=%#x route_raw=%#x decoded_sid=%#x decoded_mask=%#x cb=%u dev=%s\n",
-			dev_name(smmu->dev), idx, match_raw, route_raw, sid,
-			mask, s2cr_cb, dev_name(dev));
-	}
-}
 #else
-int arm_smmu_domain_cbndx(struct iommu_domain *domain)
-{
-	return -1;
-}
-void arm_smmu_iova_walk_domain(struct iommu_domain *domain, unsigned long iova,
-	unsigned int stage, unsigned int cb)
-{
-}
-static void arm_smmu_ipa_requester(struct arm_smmu_device *smmu, u8 cbndx,
-	u16 sid, u32 fsr, u32 fsynr0, u32 fsynr1, u32 cbfrsynra,
-	int *smr_idx, u16 *sid_mask)
-{
-	*smr_idx = -1;
-	*sid_mask = 0;
-}
-static void arm_smmu_ipa_fault(u8 cbndx, u16 sid, u16 sid_mask, u64 far,
-	u32 fsr, u32 fsynr0, u32 fsynr1, int smr_idx, int report_ret)
-{
-}
-static void arm_smmu_ipa_stream(struct device *dev,
-	struct iommu_fwspec *fwspec, struct arm_smmu_device *smmu, u8 cbndx)
+static void ipa3_diag_smmu_fault(u32 cb, u32 sid, u32 sid_mask, u64 far,
+	u32 fsr, u32 fsynr0, u32 fsynr1, u32 cbfrsynra, int smr_idx,
+	int report_ret)
 {
 }
 #endif
@@ -2216,8 +2043,6 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 {
 	int flags, ret, tmp;
 	u32 fsr, fsynr0, fsynr1, frsynra, resume;
-	u16 sid_mask;
-	int smr_idx;
 	unsigned long iova;
 	struct iommu_domain *domain = dev;
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
@@ -2319,17 +2144,8 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 		}
 		ret = IRQ_HANDLED;
 		resume = RESUME_TERMINATE;
-		/*
-		 * Outside the ratelimit and ahead of the BUG: these lines are what
-		 * makes the surviving publication records checkable rather than
-		 * merely plausible.
-		 */
-		arm_smmu_ipa_publish_report(cfg->cbndx, iova, fsr);
-		arm_smmu_ipa_requester(smmu, cfg->cbndx, frsynra, fsr, fsynr0,
-			fsynr1, frsynra, &smr_idx, &sid_mask);
-		arm_smmu_ipa_fault(cfg->cbndx, frsynra, sid_mask, iova, fsr,
-			fsynr0, fsynr1, smr_idx, tmp);
-		arm_smmu_iova_walk_domain(domain, iova, 4, cfg->cbndx);
+		ipa3_diag_smmu_fault(cfg->cbndx, frsynra, 0, iova, fsr,
+			fsynr0, fsynr1, frsynra, -1, tmp);
 		if (!non_fatal_fault) {
 			dev_err(smmu->dev,
 				"Unhandled arm-smmu context fault!\n");
@@ -3346,42 +3162,6 @@ static int arm_smmu_domain_add_master(struct arm_smmu_domain *smmu_domain,
 	return 0;
 }
 
-#if IS_ENABLED(CONFIG_IPA)
-void ipa3_audit_attach(const char *dom, u32 domid, u32 sid, bool attach);
-
-static void arm_smmu_ipa_audit(struct device *dev,
-			       struct iommu_fwspec *fwspec, bool attach)
-{
-	const char *name;
-	const char *dom;
-	u32 domid;
-
-	if (!fwspec || !fwspec->num_ids)
-		return;
-
-	name = dev_name(dev);
-	if (strstr(name, "ipa_smmu_ap")) {
-		dom = "AP";
-		domid = 0;
-	} else if (strstr(name, "ipa_smmu_wlan")) {
-		dom = "WLAN";
-		domid = 1;
-	} else if (strstr(name, "ipa_smmu_uc")) {
-		dom = "UC";
-		domid = 2;
-	} else {
-		return;
-	}
-
-	ipa3_audit_attach(dom, domid, fwspec->ids[0], attach);
-}
-#else
-static void arm_smmu_ipa_audit(struct device *dev,
-			       struct iommu_fwspec *fwspec, bool attach)
-{
-}
-#endif
-
 static void arm_smmu_detach_dev(struct iommu_domain *domain,
 				struct device *dev)
 {
@@ -3393,8 +3173,6 @@ static void arm_smmu_detach_dev(struct iommu_domain *domain,
 
 	if (dynamic)
 		return;
-
-	arm_smmu_ipa_audit(dev, fwspec, false);
 
 	if (!smmu) {
 		dev_err(dev, "Domain not attached; cannot detach!\n");
@@ -3784,11 +3562,6 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 
 	/* Looks ok, so add the device to the domain */
 	ret = arm_smmu_domain_add_master(smmu_domain, fwspec);
-	if (!ret) {
-		arm_smmu_ipa_audit(dev, fwspec, true);
-		arm_smmu_ipa_stream(dev, fwspec, smmu,
-			smmu_domain->cfg.cbndx);
-	}
 
 out_power_off:
 	/*

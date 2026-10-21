@@ -4228,9 +4228,6 @@ int _ipa_init_rt4_v3(void)
 		ipa3_ctx->rt_idx_bitmap[IPA_IP_v4] |= (1 << i);
 	IPADBG("v4 rt bitmap 0x%lx\n", ipa3_ctx->rt_idx_bitmap[IPA_IP_v4]);
 
-	ipa_diag_init_set(IPA_DIAG_RT, IPA_IP_v4, IPA_DIAG_INIT_BOTH,
-		ipa3_ctx->smem_restricted_bytes +
-		IPA_MEM_PART(v4_rt_hash_ofst));
 	rc = ipahal_rt_generate_empty_img(IPA_MEM_PART(v4_rt_num_index),
 		IPA_MEM_PART(v4_rt_hash_size), IPA_MEM_PART(v4_rt_nhash_size),
 		&mem, false);
@@ -4278,9 +4275,6 @@ int _ipa_init_rt4_v3(void)
 		rc = -EFAULT;
 	}
 
-	ipa_diag_initpub(IPA_DIAG_RT, IPA_IP_v4,
-		v4_cmd.hash_local_addr ? v4_cmd.hash_local_addr :
-		v4_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4308,9 +4302,6 @@ int _ipa_init_rt6_v3(void)
 		ipa3_ctx->rt_idx_bitmap[IPA_IP_v6] |= (1 << i);
 	IPADBG("v6 rt bitmap 0x%lx\n", ipa3_ctx->rt_idx_bitmap[IPA_IP_v6]);
 
-	ipa_diag_init_set(IPA_DIAG_RT, IPA_IP_v6, IPA_DIAG_INIT_BOTH,
-		ipa3_ctx->smem_restricted_bytes +
-		IPA_MEM_PART(v6_rt_hash_ofst));
 	rc = ipahal_rt_generate_empty_img(IPA_MEM_PART(v6_rt_num_index),
 		IPA_MEM_PART(v6_rt_hash_size), IPA_MEM_PART(v6_rt_nhash_size),
 		&mem, false);
@@ -4358,9 +4349,6 @@ int _ipa_init_rt6_v3(void)
 		rc = -EFAULT;
 	}
 
-	ipa_diag_initpub(IPA_DIAG_RT, IPA_IP_v6,
-		v6_cmd.hash_local_addr ? v6_cmd.hash_local_addr :
-		v6_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4381,9 +4369,6 @@ int _ipa_init_flt4_v3(void)
 	struct ipahal_imm_cmd_pyld *cmd_pyld;
 	int rc;
 
-	ipa_diag_init_set(IPA_DIAG_FLT, IPA_IP_v4, IPA_DIAG_INIT_BOTH,
-		ipa3_ctx->smem_restricted_bytes +
-		IPA_MEM_PART(v4_flt_hash_ofst));
 	rc = ipahal_flt_generate_empty_img(ipa3_ctx->ep_flt_num,
 		IPA_MEM_PART(v4_flt_hash_size),
 		IPA_MEM_PART(v4_flt_nhash_size), ipa3_ctx->ep_flt_bitmap,
@@ -4432,9 +4417,6 @@ int _ipa_init_flt4_v3(void)
 		rc = -EFAULT;
 	}
 
-	ipa_diag_initpub(IPA_DIAG_FLT, IPA_IP_v4,
-		v4_cmd.hash_local_addr ? v4_cmd.hash_local_addr :
-		v4_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -4455,9 +4437,6 @@ int _ipa_init_flt6_v3(void)
 	struct ipahal_imm_cmd_pyld *cmd_pyld;
 	int rc;
 
-	ipa_diag_init_set(IPA_DIAG_FLT, IPA_IP_v6, IPA_DIAG_INIT_BOTH,
-		ipa3_ctx->smem_restricted_bytes +
-		IPA_MEM_PART(v6_flt_hash_ofst));
 	rc = ipahal_flt_generate_empty_img(ipa3_ctx->ep_flt_num,
 		IPA_MEM_PART(v6_flt_hash_size),
 		IPA_MEM_PART(v6_flt_nhash_size), ipa3_ctx->ep_flt_bitmap,
@@ -4507,9 +4486,6 @@ int _ipa_init_flt6_v3(void)
 		rc = -EFAULT;
 	}
 
-	ipa_diag_initpub(IPA_DIAG_FLT, IPA_IP_v6,
-		v6_cmd.hash_local_addr ? v6_cmd.hash_local_addr :
-		v6_cmd.nhash_local_addr, mem.size, rc, true);
 	ipahal_destroy_imm_cmd(cmd_pyld);
 
 free_mem:
@@ -8032,9 +8008,6 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	  "WLAN CB PROBE dev=%pK DOMAIN ATTRS bypass=%d fast=%d\n",
 	  dev, bypass, fast);
 
-	pr_err("IPA_AUDIT pool dom=WLAN domid=%u base=0x%x size=0x%x bypass=%d fast=%d\n",
-		IPA_SMMU_CB_WLAN, cb->va_start, cb->va_size, bypass, fast);
-
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_WLAN] = (bypass != 0);
 
 	/* MAP ipa-uc ram */
@@ -8143,9 +8116,6 @@ static int ipa_smmu_uc_cb_probe(struct device *dev)
 	IPADBG("UC CB PROBE dev=%pK DOMAIN ATTRS bypass=%d fast=%d\n",
 		   dev, bypass, fast);
 
-	pr_err("IPA_AUDIT pool dom=UC domid=%u base=0x%x size=0x%x bypass=%d fast=%d\n",
-		IPA_SMMU_CB_UC, cb->va_start, cb->va_size, bypass, fast);
-
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC] = (bypass != 0);
 
 	ipa3_ctx->uc_pdev = dev;
@@ -8237,9 +8207,6 @@ static int ipa_smmu_ap_cb_probe(struct device *dev)
 
 	IPADBG("AP CB PROBE dev=%pK DOMAIN ATTRS bypass=%d fast=%d\n",
 		   dev, bypass, fast);
-
-	pr_err("IPA_AUDIT pool dom=AP domid=%u base=0x%x size=0x%x bypass=%d fast=%d\n",
-		IPA_SMMU_CB_AP, cb->va_start, cb->va_size, bypass, fast);
 
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_AP] = (bypass != 0);
 
@@ -8729,320 +8696,6 @@ int ipa3_register_ipa_ready_cb(void (*ipa_ready_cb)(void *), void *user_data)
 	return 0;
 }
 
-/* Fastmap pool base that the uC context faulted on, 2026-10-20. */
-#define IPA_AUDIT_TARGET	0x20000000ULL
-
-/* Audit sequence is its own space; the printk sequence is unrelated. */
-static atomic_t ipa3_audit_seq = ATOMIC_INIT(0);
-static atomic_t ipa3_audit_map_skipped = ATOMIC_INIT(0);
-
-static bool ipa_audit_verbose;
-module_param_named(audit_verbose, ipa_audit_verbose, bool, 0644);
-MODULE_PARM_DESC(audit_verbose, "Log every IPA SMMU map and unmap");
-
-static bool ipa3_audit_hits(unsigned long iova, size_t size)
-{
-	u64 target = IPA_AUDIT_TARGET;
-	u64 base = iova;
-
-	return size && target >= base && target - base < size;
-}
-
-/*
- * A per-mapping record is only worth its ring space when its range contains
- * the address the uC faulted on; every other mapping is available with
- * ipa.audit_verbose=1. Address windows cannot stand in for this test: the uC
- * context holds IOVAs from 0 upwards (its cursor starts unseeded), the pool
- * windows of the two contexts overlap, and a range test is the only thing
- * that answers the actual question.
- */
-static bool ipa3_audit_keep(unsigned long iova, size_t size, bool failed)
-{
-	if (failed || ipa_audit_verbose)
-		return true;
-
-	return ipa3_audit_hits(iova, size);
-}
-
-u32 ipa3_audit_map_skipped_count(void)
-{
-	return (u32)atomic_read(&ipa3_audit_map_skipped);
-}
-EXPORT_SYMBOL(ipa3_audit_map_skipped_count);
-
-void ipa3_audit_map(const char *dom, u32 domid, unsigned long iova,
-	phys_addr_t pa, size_t size, int prot, int ret,
-	unsigned long caller)
-{
-	u32 seq;
-
-	if (!ipa3_audit_keep(iova, size, ret != 0)) {
-		atomic_inc(&ipa3_audit_map_skipped);
-		return;
-	}
-
-	seq = atomic_inc_return(&ipa3_audit_seq);
-	pr_err("IPA_AUDIT map seq=%u dom=%s domid=%u iova=0x%llx pa=0x%llx len=0x%zx prot=0x%x ret=%d caller=%pS target=%u\n",
-		seq, dom, domid, (u64)iova, (u64)pa, size, prot, ret,
-		(void *)caller, ipa3_audit_hits(iova, size));
-}
-EXPORT_SYMBOL(ipa3_audit_map);
-
-void ipa3_audit_unmap(const char *dom, u32 domid, unsigned long iova,
-	size_t requested, size_t unmapped, unsigned long caller)
-{
-	u32 seq;
-
-	if (!ipa3_audit_keep(iova, requested, unmapped != requested)) {
-		atomic_inc(&ipa3_audit_map_skipped);
-		return;
-	}
-
-	seq = atomic_inc_return(&ipa3_audit_seq);
-	pr_err("IPA_AUDIT unmap seq=%u dom=%s domid=%u iova=0x%llx requested=0x%zx unmapped=0x%zx caller=%pS target=%u\n",
-		seq, dom, domid, (u64)iova, requested, unmapped,
-		(void *)caller, ipa3_audit_hits(iova, requested));
-}
-EXPORT_SYMBOL(ipa3_audit_unmap);
-
-void ipa3_audit_attach(const char *dom, u32 domid, u32 sid, bool attach)
-{
-	u32 seq = atomic_inc_return(&ipa3_audit_seq);
-
-	pr_err("IPA_AUDIT %s seq=%u dom=%s domid=%u sid=0x%x\n",
-		attach ? "attach" : "detach", seq, dom, domid, sid);
-}
-EXPORT_SYMBOL(ipa3_audit_attach);
-
-/*
- * SAP pipes: the uC learns them from the WDI set-up payload and from the
- * enable/resume immediate params (0x19 and 0x0a in the round-9 capture).
- */
-static const int ipa_hdr_sap_pipes[] = { 25, 10 };
-
-/* Entry rows printed per region beyond the SAP rows; the summary counts all. */
-#define IPA_HDR_ROWS_PER_REGION	4
-
-struct ipa_hdr_region {
-	const char	*name;
-	u32		ofst;		/* index into the SRAM window */
-	u32		first_idx;	/* table index of the first entry */
-	u32		entries;
-	bool		flt;
-};
-
-static atomic_t ipa_hdr_dump_done = ATOMIC_INIT(0);
-
-/*
- * Index of a pipe's entry inside a FLT table header: one entry per
- * filter-capable pipe, in pipe order, after the bitmap word.
- */
-static int ipa_hdr_flt_idx(int pipe)
-{
-	int i, idx = 0;
-
-	for (i = 0; i < ipa3_ctx->ipa_num_pipes; i++) {
-		if (!ipa_is_ep_support_flt(i))
-			continue;
-		if (i == pipe)
-			return idx;
-		idx++;
-	}
-
-	return -1;
-}
-
-static u64 ipa_hdr_read_entry(u8 __iomem *sram, u32 ofst)
-{
-	return ((u64)readl(sram + ofst + 4) << 32) | readl(sram + ofst);
-}
-
-static void ipa_hdr_dump_entry(u8 __iomem *sram,
-	const struct ipa_hdr_region *r, u32 i, u64 empty, int pipe)
-{
-	u64 raw = ipa_hdr_read_entry(sram, r->ofst + i * 8);
-	bool is_sys = !(raw & 0x1ULL);
-	u64 addr = raw & ~0x1ULL;
-
-	pr_err("IPA_HDR kind=entry region=%s idx=%u pipe=%d raw=%016llx is_sys=%u addr=0x%llx align=%u empty=%u target=%u\n",
-		r->name, r->first_idx + i, pipe, raw, is_sys, addr,
-		!(addr & 0x7fULL), is_sys && addr == empty,
-		is_sys && addr == IPA_AUDIT_TARGET);
-}
-
-/*
- * Dump the FLT/RT table header entries the uC can see, with the same decode
- * the driver applies on the way in, once per boot at pipe activation. The
- * init path points every entry at the empty table, so unused slots carry the
- * empty table's IOVA with is_sys set; the SAP rows and the per-region target
- * counts are what decide whether the uC can walk one of them.
- */
-void ipa3_dump_fltrt_hdrs(const char *when)
-{
-	struct ipa_hdr_region r[8];
-	struct ipa_smmu_cb_ctx *ap, *uc;
-	struct ipa3_rt_tbl *rt;
-	struct ipa3_flt_tbl *flt;
-	u8 __iomem *sram;
-	unsigned long phys;
-	u64 empty;
-	u32 w, i, ip, pipe, rows, nonzero, empty_hits, target_hits, k;
-	int idx;
-
-	if (atomic_xchg(&ipa_hdr_dump_done, 1))
-		return;
-
-	w = ipahal_get_hw_tbl_hdr_width();
-	if (w != 8) {
-		pr_err("IPA_HDR kind=ctx when=%s aborted hdr_w=%u (expected 8)\n",
-			when, w);
-		return;
-	}
-
-	/* Window base as _ipa_init_sram_v3() establishes it. */
-	phys = ipa3_ctx->ipa_wrapper_base +
-		ipa3_ctx->ctrl->ipa_reg_base_ofst +
-		ipahal_get_reg_n_ofst(IPA_SW_AREA_RAM_DIRECT_ACCESS_n,
-			ipa3_ctx->smem_restricted_bytes / 4);
-	sram = ioremap(phys, ipa3_ctx->smem_sz);
-	if (!sram) {
-		pr_err("IPA_HDR kind=ctx when=%s aborted ioremap failed\n",
-			when);
-		return;
-	}
-
-	empty = (u64)ipahal_get_empty_fltrt_base();
-	ap = ipa3_get_smmu_ctx(IPA_SMMU_CB_AP);
-	uc = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
-
-	pr_err("IPA_HDR kind=ctx when=%s empty_tbl=0x%llx target=0x%llx hdr_w=%u smem_sz=0x%x restricted=0x%x pipes=%u ep_flt_num=%u ap_next=0x%lx uc_next=0x%lx uc_va_start=0x%lx uc_va_end=0x%lx\n",
-		when, empty, IPA_AUDIT_TARGET, w, ipa3_ctx->smem_sz,
-		ipa3_ctx->smem_restricted_bytes, ipa3_ctx->ipa_num_pipes,
-		ipa3_ctx->ep_flt_num, ap->next_addr, uc->next_addr,
-		uc->va_start, uc->va_end);
-
-	/* Entry k of an RT region lives at region offset k * w. */
-	r[0].name = "rt4h";
-	r[0].ofst = IPA_MEM_PART(v4_rt_hash_ofst) +
-		IPA_MEM_PART(v4_apps_rt_index_lo) * w;
-	r[0].first_idx = IPA_MEM_PART(v4_apps_rt_index_lo);
-	r[0].entries = IPA_MEM_PART(v4_apps_rt_index_hi) -
-		IPA_MEM_PART(v4_apps_rt_index_lo) + 1;
-	r[1].name = "rt4nh";
-	r[1].ofst = IPA_MEM_PART(v4_rt_nhash_ofst) +
-		IPA_MEM_PART(v4_apps_rt_index_lo) * w;
-	r[1].first_idx = r[0].first_idx;
-	r[1].entries = r[0].entries;
-	r[2].name = "rt6h";
-	r[2].ofst = IPA_MEM_PART(v6_rt_hash_ofst) +
-		IPA_MEM_PART(v6_apps_rt_index_lo) * w;
-	r[2].first_idx = IPA_MEM_PART(v6_apps_rt_index_lo);
-	r[2].entries = IPA_MEM_PART(v6_apps_rt_index_hi) -
-		IPA_MEM_PART(v6_apps_rt_index_lo) + 1;
-	r[3].name = "rt6nh";
-	r[3].ofst = IPA_MEM_PART(v6_rt_nhash_ofst) +
-		IPA_MEM_PART(v6_apps_rt_index_lo) * w;
-	r[3].first_idx = r[2].first_idx;
-	r[3].entries = r[2].entries;
-
-	/* A FLT region starts with a bitmap word, then one entry per pipe. */
-	r[4].name = "flt4h";
-	r[4].ofst = IPA_MEM_PART(v4_flt_hash_ofst) + w;
-	r[5].name = "flt4nh";
-	r[5].ofst = IPA_MEM_PART(v4_flt_nhash_ofst) + w;
-	r[6].name = "flt6h";
-	r[6].ofst = IPA_MEM_PART(v6_flt_hash_ofst) + w;
-	r[7].name = "flt6nh";
-	r[7].ofst = IPA_MEM_PART(v6_flt_nhash_ofst) + w;
-	for (i = 4; i < 8; i++) {
-		r[i].first_idx = 0;
-		r[i].entries = ipa3_ctx->ep_flt_num;
-		r[i].flt = true;
-	}
-
-	for (i = 0; i < 8; i++) {
-		nonzero = 0;
-		empty_hits = 0;
-		target_hits = 0;
-		rows = 0;
-		for (k = 0; k < r[i].entries; k++) {
-			u64 raw = ipa_hdr_read_entry(sram, r[i].ofst + k * w);
-			bool is_sys = !(raw & 0x1ULL);
-			u64 addr = raw & ~0x1ULL;
-
-			if (raw)
-				nonzero++;
-			if (is_sys && addr == empty)
-				empty_hits++;
-			if (is_sys && addr == IPA_AUDIT_TARGET)
-				target_hits++;
-			if (raw && rows < IPA_HDR_ROWS_PER_REGION) {
-				ipa_hdr_dump_entry(sram, &r[i], k, empty, -1);
-				rows++;
-			}
-		}
-		pr_err("IPA_HDR kind=region region=%s ofst=0x%x first_idx=%u entries=%u nonzero=%u empty_hits=%u target_hits=%u shown=%u\n",
-			r[i].name, r[i].ofst, r[i].first_idx, r[i].entries,
-			nonzero, empty_hits, target_hits, rows);
-	}
-
-	/* What exists, so a header row can be matched to an owner. */
-	for (ip = IPA_IP_v4; ip < IPA_IP_MAX; ip++) {
-		list_for_each_entry(rt, &ipa3_ctx->rt_tbl_set[ip].head_rt_tbl_list,
-				link)
-			pr_err("IPA_HDR kind=inv rt ip=%u idx=%u sys_h=%u sys_nh=%u pa_h=0x%llx pa_nh=0x%llx sz_h=%u sz_nh=%u rules=%u\n",
-				ip, rt->idx,
-				rt->in_sys[IPA_RULE_HASHABLE],
-				rt->in_sys[IPA_RULE_NON_HASHABLE],
-				(u64)rt->curr_mem[IPA_RULE_HASHABLE].phys_base,
-				(u64)rt->curr_mem[IPA_RULE_NON_HASHABLE].phys_base,
-				rt->sz[IPA_RULE_HASHABLE],
-				rt->sz[IPA_RULE_NON_HASHABLE], rt->rule_cnt);
-		for (pipe = 0; pipe < ipa3_ctx->ipa_num_pipes; pipe++) {
-			if (!ipa_is_ep_support_flt(pipe))
-				continue;
-			flt = &ipa3_ctx->flt_tbl[pipe][ip];
-			if (!flt->sz[IPA_RULE_HASHABLE] &&
-			    !flt->sz[IPA_RULE_NON_HASHABLE] && !flt->rule_cnt)
-				continue;
-			pr_err("IPA_HDR kind=inv flt pipe=%u ip=%u sys_h=%u sys_nh=%u pa_h=0x%llx pa_nh=0x%llx sz_h=%u sz_nh=%u rules=%u\n",
-				pipe, ip, flt->in_sys[IPA_RULE_HASHABLE],
-				flt->in_sys[IPA_RULE_NON_HASHABLE],
-				(u64)flt->curr_mem[IPA_RULE_HASHABLE].phys_base,
-				(u64)flt->curr_mem[IPA_RULE_NON_HASHABLE].phys_base,
-				flt->sz[IPA_RULE_HASHABLE],
-				flt->sz[IPA_RULE_NON_HASHABLE], flt->rule_cnt);
-		}
-	}
-
-	/* The decisive rows: the SAP pipes, per IP family and rule type. */
-	for (i = 0; i < ARRAY_SIZE(ipa_hdr_sap_pipes); i++) {
-		pipe = ipa_hdr_sap_pipes[i];
-		idx = ipa_hdr_flt_idx(pipe);
-		if (idx < 0 || pipe >= ipa3_ctx->ipa_num_pipes)
-			continue;
-		for (ip = IPA_IP_v4; ip < IPA_IP_MAX; ip++) {
-			flt = &ipa3_ctx->flt_tbl[pipe][ip];
-			pr_err("IPA_HDR kind=sap pipe=%u ip=%u valid=%u flt_idx=%d rules=%u sz_h=%u sz_nh=%u exists=%u rt_idx=%u\n",
-				pipe, ip, ipa3_ctx->ep[pipe].valid, idx,
-				flt->rule_cnt,
-				flt->sz[IPA_RULE_HASHABLE],
-				flt->sz[IPA_RULE_NON_HASHABLE],
-				(flt->sz[IPA_RULE_HASHABLE] ||
-				 flt->sz[IPA_RULE_NON_HASHABLE]),
-				ipa3_ctx->ep[pipe].rt_tbl_idx);
-			ipa_hdr_dump_entry(sram, &r[4 + (ip == IPA_IP_v6 ? 2 : 0)],
-				idx, empty, pipe);
-			ipa_hdr_dump_entry(sram,
-				&r[4 + (ip == IPA_IP_v6 ? 2 : 0) + 1],
-				idx, empty, pipe);
-		}
-	}
-
-	iounmap(sram);
-}
-EXPORT_SYMBOL(ipa3_dump_fltrt_hdrs);
-
 /*
  * Round-17: bounded aliases of the live WDI uC mappings. The firmware-visible
  * address is 0x20000000 + original low IOVA, same backing and permissions.
@@ -9187,8 +8840,6 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	unsigned long iova, phys_addr_t paddr, size_t size, int prot)
 {
 	struct ipa_smmu_cb_ctx *cb = NULL;
-	const char *dom = "OTHER";
-	u32 domid = 0xff;
 	int ret;
 
 	IPADBG_LOW("domain =0x%pK iova 0x%lx\n", domain, iova);
@@ -9197,8 +8848,6 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	/* make sure no overlapping */
 	if (domain == ipa3_get_smmu_domain()) {
 		cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_AP);
-		dom = "AP";
-		domid = IPA_SMMU_CB_AP;
 		if (iova >= cb->va_start && iova < cb->va_end) {
 			IPAERR("iommu AP overlap addr 0x%lx\n", iova);
 			ipa_assert();
@@ -9207,17 +8856,11 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	} else if (domain == ipa3_get_wlan_smmu_domain()) {
 		/* wlan is one time map */
 		cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_WLAN);
-		dom = "WLAN";
-		domid = IPA_SMMU_CB_WLAN;
 	} else if (domain == ipa3_get_11ad_smmu_domain()) {
 		/* 11ad is one time map */
 		cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_11AD);
-		dom = "11AD";
-		domid = IPA_SMMU_CB_11AD;
 	} else if (domain == ipa3_get_uc_smmu_domain()) {
 		cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
-		dom = "UC";
-		domid = IPA_SMMU_CB_UC;
 		if (iova >= cb->va_start && iova < cb->va_end) {
 			IPAERR("iommu uC overlap addr 0x%lx\n", iova);
 			ipa_assert();
@@ -9242,37 +8885,17 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 		prot |= IOMMU_CACHE;
 
 	ret = iommu_map(domain, iova, paddr, size, prot);
-	ipa3_audit_map(dom, domid, iova, paddr, size, prot, ret,
-		(unsigned long)__builtin_return_address(0));
 	return ret;
 }
 
 int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	size_t size)
 {
-	const char *dom = "OTHER";
-	u32 domid = 0xff;
 	size_t unmapped;
-
-	if (domain == ipa3_get_smmu_domain()) {
-		dom = "AP";
-		domid = IPA_SMMU_CB_AP;
-	} else if (domain == ipa3_get_wlan_smmu_domain()) {
-		dom = "WLAN";
-		domid = IPA_SMMU_CB_WLAN;
-	} else if (domain == ipa3_get_11ad_smmu_domain()) {
-		dom = "11AD";
-		domid = IPA_SMMU_CB_11AD;
-	} else if (domain == ipa3_get_uc_smmu_domain()) {
-		dom = "UC";
-		domid = IPA_SMMU_CB_UC;
-	}
 
 	unmapped = iommu_unmap(domain, iova, size);
 	if (domain == ipa3_get_uc_smmu_domain())
 		ipa3_diag_alias_drop(domain, iova, size);
-	ipa3_audit_unmap(dom, domid, iova, size, unmapped,
-		(unsigned long)__builtin_return_address(0));
 	return unmapped;
 }
 

@@ -4,7 +4,6 @@
  */
 
 #include "ipa_i.h"
-#include "ipa_diag.h"
 #include "ipahal/ipahal.h"
 #include "ipahal/ipahal_fltrt.h"
 
@@ -487,9 +486,6 @@ int __ipa_commit_flt_v3(enum ipa_ip_type ip)
 	int num_cmd = 0;
 	int i;
 	int hdr_idx;
-	u64 gen;
-	u32 ntag;
-	u32 flt_tagged = 0;
 	u32 lcl_hash_hdr, lcl_nhash_hdr;
 	u32 lcl_hash_bdy, lcl_nhash_bdy;
 	bool lcl_hash, lcl_nhash;
@@ -638,7 +634,6 @@ int __ipa_commit_flt_v3(enum ipa_ip_type ip)
 		++num_cmd;
 	}
 
-	gen = ipa_diag_next_gen();
 	hdr_idx = 0;
 	for (i = 0; i < ipa3_ctx->ipa_num_pipes; i++) {
 		if (!ipa_is_ep_support_flt(i)) {
@@ -660,19 +655,6 @@ int __ipa_commit_flt_v3(enum ipa_ip_type ip)
 
 		IPADBG_LOW("Prepare imm cmd for hdr at index %d for pipe %d\n",
 			hdr_idx, i);
-
-		/* Tag this pipe's final slot before its command is built. */
-		ntag = 0;
-		if (ipahal_diag_tag_img(IPA_DIAG_FLT, ip, false, i, hdr_idx,
-				alloc_params.nhash_hdr.base +
-					hdr_idx * tbl_hdr_width,
-				alloc_params.nhash_hdr.phys_base +
-					hdr_idx * tbl_hdr_width,
-				1, gen, lcl_nhash_hdr + hdr_idx * tbl_hdr_width,
-				&ntag))
-			IPAERR("flt nhash tagging incomplete IP %d pipe %d\n",
-				ip, i);
-		flt_tagged += ntag;
 
 		mem_cmd.is_read = false;
 		mem_cmd.skip_pipeline_clear = false;
@@ -698,20 +680,6 @@ int __ipa_commit_flt_v3(enum ipa_ip_type ip)
 		 * to hash tables(filer/routing) operation not supported.
 		 */
 		if (!ipa3_ctx->ipa_fltrt_not_hashable) {
-			ntag = 0;
-			if (ipahal_diag_tag_img(IPA_DIAG_FLT, ip, true, i,
-					hdr_idx,
-					alloc_params.hash_hdr.base +
-						hdr_idx * tbl_hdr_width,
-					alloc_params.hash_hdr.phys_base +
-						hdr_idx * tbl_hdr_width,
-					1, gen,
-					lcl_hash_hdr + hdr_idx * tbl_hdr_width,
-					&ntag))
-				IPAERR("flt hash tagging incomplete IP %d pipe %d\n",
-					ip, i);
-			flt_tagged += ntag;
-
 			mem_cmd.is_read = false;
 			mem_cmd.skip_pipeline_clear = false;
 			mem_cmd.pipeline_clear_options = IPAHAL_HPS_CLEAR;
@@ -791,17 +759,8 @@ int __ipa_commit_flt_v3(enum ipa_ip_type ip)
 	if (ipa3_send_cmd(num_cmd, desc)) {
 		IPAERR("fail to send immediate command\n");
 		rc = -EFAULT;
-		ipa_diag_pub(gen, IPA_DIAG_FLT, ip, false,
-			alloc_params.nhash_hdr.phys_base, lcl_nhash_hdr,
-			alloc_params.nhash_hdr.size, alloc_params.tbls_num,
-			flt_tagged, rc, false);
 		goto fail_imm_cmd_construct;
 	}
-
-	ipa_diag_pub(gen, IPA_DIAG_FLT, ip, false,
-		alloc_params.nhash_hdr.phys_base, lcl_nhash_hdr,
-		alloc_params.nhash_hdr.size, alloc_params.tbls_num, flt_tagged,
-		0, true);
 
 	IPADBG_LOW("Hashable HEAD\n");
 	IPA_DUMP_BUFF(alloc_params.hash_hdr.base,

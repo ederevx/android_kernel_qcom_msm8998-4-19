@@ -1163,8 +1163,20 @@ pwr2:
 	}
 
 	if (htt_ipa_uc_smmu_enabled(pdev)) {
-		cds_smmu_map_unmap(true, tx_buffer_count_pwr2,
-				   mem_map_table);
+		if (cds_smmu_map_unmap(true, tx_buffer_count_pwr2,
+				       mem_map_table)) {
+			cds_smmu_map_unmap(false, tx_buffer_count_pwr2,
+					   mem_map_table);
+			for (idx = 0; idx < tx_buffer_count_pwr2; idx++) {
+				qdf_mem_shared_mem_free(pdev->osdev,
+					pdev->ipa_uc_tx_rsc.
+						tx_buf_pool_strg[idx]);
+				pdev->ipa_uc_tx_rsc.
+					tx_buf_pool_strg[idx] = NULL;
+			}
+			qdf_mem_free(mem_map_table);
+			return 0;
+		}
 		qdf_mem_free(mem_map_table);
 	}
 
@@ -1316,8 +1328,20 @@ pwr2:
 	}
 
 	if (htt_ipa_uc_smmu_enabled(pdev)) {
-		cds_smmu_map_unmap(true, tx_buffer_count_pwr2,
-				   mem_map_table);
+		if (cds_smmu_map_unmap(true, tx_buffer_count_pwr2,
+				       mem_map_table)) {
+			cds_smmu_map_unmap(false, tx_buffer_count_pwr2,
+					   mem_map_table);
+			for (idx = 0; idx < tx_buffer_count_pwr2; idx++) {
+				qdf_mem_shared_mem_free(pdev->osdev,
+					pdev->ipa_uc_tx_rsc.
+						tx_buf_pool_strg[idx]);
+				pdev->ipa_uc_tx_rsc.
+					tx_buf_pool_strg[idx] = NULL;
+			}
+			qdf_mem_free(mem_map_table);
+			return 0;
+		}
 		qdf_mem_free(mem_map_table);
 	}
 

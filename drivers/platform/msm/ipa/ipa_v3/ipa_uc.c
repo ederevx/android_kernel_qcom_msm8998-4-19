@@ -557,6 +557,8 @@ int ipa3_uc_unregister_ready_cb(struct notifier_block *nb)
 }
 EXPORT_SYMBOL(ipa3_uc_unregister_ready_cb);
 
+static atomic_t ipadiag_uc_events = ATOMIC_INIT(0);
+
 static void ipa3_uc_event_handler(enum ipa_irq_type interrupt,
 				 void *private_data,
 				 void *interrupt_data)
@@ -571,6 +573,10 @@ static void ipa3_uc_event_handler(enum ipa_irq_type interrupt,
 	IPADBG("uC evt opcode=%u\n",
 		ipa3_ctx->uc_ctx.uc_sram_mmio->eventOp);
 
+	if (atomic_inc_return(&ipadiag_uc_events) <= 50)
+		pr_info("IPADIAG uc_evt op=%u p=0x%x\n",
+			ipa3_ctx->uc_ctx.uc_sram_mmio->eventOp,
+			ipa3_ctx->uc_ctx.uc_sram_mmio->eventParams);
 
 	feature = EXTRACT_UC_FEATURE(ipa3_ctx->uc_ctx.uc_sram_mmio->eventOp);
 
@@ -763,6 +769,8 @@ static void ipa3_uc_wigig_misc_int_handler(enum ipa_irq_type interrupt,
 	IPADBG("exit\n");
 }
 
+static atomic_t ipadiag_uc_lines = ATOMIC_INIT(0);
+
 static int ipa3_uc_send_cmd_64b_param(u32 cmd_lo, u32 cmd_hi, u32 opcode,
 	u32 expected_status, bool polling_mode, unsigned long timeout_jiffies)
 {
@@ -780,6 +788,9 @@ send_cmd_lock:
 		return -EBADF;
 	}
 send_cmd:
+	if (atomic_inc_return(&ipadiag_uc_lines) <= 200)
+		pr_info("IPADIAG uc> op=%u lo=0x%x poll=%d\n",
+			opcode, cmd_lo, polling_mode);
 	init_completion(&ipa3_ctx->uc_ctx.uc_completion);
 
 	ipa3_ctx->uc_ctx.uc_sram_mmio->cmdParams = cmd_lo;
@@ -839,6 +850,10 @@ send_cmd:
 			ipa_assert();
 		}
 	}
+
+	if (atomic_read(&ipadiag_uc_lines) <= 200)
+		pr_info("IPADIAG uc< op=%u st=%u\n",
+			opcode, ipa3_ctx->uc_ctx.uc_status);
 
 	if (ipa3_ctx->uc_ctx.uc_status != expected_status) {
 		if (ipa3_ctx->uc_ctx.uc_status ==

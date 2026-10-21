@@ -16,6 +16,19 @@ typedef u64 av8l_fast_iopte;
 
 struct io_pgtable_ops;
 
+/* Read-only walk snapshot: one entry per level actually walked. */
+#define AV8L_FAST_WALK_LEVELS	3
+
+struct av8l_fast_walk {
+	u64 desc[AV8L_FAST_WALK_LEVELS];
+	phys_addr_t table[AV8L_FAST_WALK_LEVELS];
+	u32 index[AV8L_FAST_WALK_LEVELS];
+	u8 level[AV8L_FAST_WALK_LEVELS];
+	u8 terminal[AV8L_FAST_WALK_LEVELS];
+	u8 n;
+	u8 split;
+};
+
 #ifdef CONFIG_IOMMU_IO_PGTABLE_FAST
 
 int av8l_fast_map_public(struct io_pgtable_ops *ops, unsigned long iova,
@@ -33,6 +46,9 @@ bool av8l_fast_iova_coherent_public(struct io_pgtable_ops *ops,
 
 phys_addr_t av8l_fast_iova_to_phys_public(struct io_pgtable_ops *ops,
 					  unsigned long iova);
+
+int av8l_fast_iova_walk_public(struct io_pgtable_ops *ops, unsigned long iova,
+			       struct av8l_fast_walk *walk);
 #else
 static inline int
 av8l_fast_map_public(struct io_pgtable_ops *ops, unsigned long iova,
@@ -57,6 +73,13 @@ static inline bool av8l_fast_iova_coherent_public(struct io_pgtable_ops *ops,
 {
 	return false;
 }
+static inline int
+av8l_fast_iova_walk_public(struct io_pgtable_ops *ops, unsigned long iova,
+			   struct av8l_fast_walk *walk)
+{
+	return -EINVAL;
+}
+
 static inline phys_addr_t
 av8l_fast_iova_to_phys_public(struct io_pgtable_ops *ops,
 				  unsigned long iova)

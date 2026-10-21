@@ -1367,6 +1367,8 @@ struct ipa_smmu_in_params {
 struct ipa_smmu_out_params {
 	bool smmu_enable;
 	bool shared_cb;
+	/* WLAN buffers are mapped at their own physical address. */
+	bool identity_map;
 };
 
 #if defined CONFIG_IPA || defined CONFIG_IPA3

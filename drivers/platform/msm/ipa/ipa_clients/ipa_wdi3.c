@@ -9,6 +9,7 @@
 #include "../ipa_common_i.h"
 #include "../ipa_v3/ipa_pm.h"
 #include "../ipa_v3/ipa_i.h"
+#include "../ipa_v3/ipa_diag.h"
 
 #define OFFLOAD_DRV_NAME "ipa_wdi"
 #define IPA_WDI_DBG(fmt, args...) \
@@ -484,6 +485,10 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		return -EPERM;
 	}
 
+	pr_err("IPA17 WDISYS phase=entry ver=%d num_sys=%u smmu=%d\n",
+		ipa_wdi_ctx->wdi_version, in->num_sys_pipe_needed,
+		in->is_smmu_enabled);
+
 	if (in->num_sys_pipe_needed > IPA_WDI_MAX_SUPPORTED_SYS_PIPE) {
 		IPA_WDI_ERR("ipa can only support up to %d sys pipe\n",
 			IPA_WDI_MAX_SUPPORTED_SYS_PIPE);
@@ -494,9 +499,13 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 
 	/* setup sys pipe when needed */
 	for (i = 0; i < ipa_wdi_ctx->num_sys_pipe_needed; i++) {
+		pr_err("IPA17 WDISYS sys_pipe i=%d num_sys=%u\n", i,
+			ipa_wdi_ctx->num_sys_pipe_needed);
 		ret = ipa_setup_sys_pipe(&in->sys_in[i],
 			&ipa_wdi_ctx->sys_pipe_hdl[i]);
 		if (ret) {
+			pr_err("IPA17 WDISYS sys_pipe_fail i=%d ret=%d\n", i,
+				ret);
 			IPA_WDI_ERR("fail to setup sys pipe %d\n", i);
 			ret = -EFAULT;
 			goto fail_setup_sys_pipe;
@@ -578,6 +587,8 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 				in->u_rx.rx.event_ring_doorbell_pa;
 			in_rx.u.ul.rdy_comp_ring_size =
 				in->u_rx.rx.event_ring_size;
+			pr_err("IPA17 WDIEP dir=rx client=%d smmu=%d\n",
+				(int)in_rx.sys.client, in_rx.smmu_enabled);
 			if (ipa_connect_wdi_pipe(&in_rx, &out_rx)) {
 				IPA_WDI_ERR("fail to setup rx pipe\n");
 				ret = -EFAULT;
@@ -603,6 +614,8 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 				in->u_tx.tx.event_ring_size;
 			in_tx.u.dl.num_tx_buffers =
 				in->u_tx.tx.num_pkt_buffers;
+			pr_err("IPA17 WDIEP dir=tx client=%d smmu=%d\n",
+				(int)in_tx.sys.client, in_tx.smmu_enabled);
 			if (ipa_connect_wdi_pipe(&in_tx, &out_tx)) {
 				IPA_WDI_ERR("fail to setup tx pipe\n");
 				ret = -EFAULT;
@@ -630,6 +643,8 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 				in->u_rx.rx_smmu.event_ring_doorbell_pa;
 			in_rx.u.ul_smmu.rdy_comp_ring_size =
 				in->u_rx.rx_smmu.event_ring_size;
+			pr_err("IPA17 WDIEP dir=rx client=%d smmu=%d\n",
+				(int)in_rx.sys.client, in_rx.smmu_enabled);
 			if (ipa_connect_wdi_pipe(&in_rx, &out_rx)) {
 				IPA_WDI_ERR("fail to setup rx pipe\n");
 				ret = -EFAULT;
@@ -655,6 +670,8 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 				in->u_tx.tx_smmu.event_ring_size;
 			in_tx.u.dl_smmu.num_tx_buffers =
 				in->u_tx.tx_smmu.num_pkt_buffers;
+			pr_err("IPA17 WDIEP dir=tx client=%d smmu=%d\n",
+				(int)in_tx.sys.client, in_tx.smmu_enabled);
 			if (ipa_connect_wdi_pipe(&in_tx, &out_tx)) {
 				IPA_WDI_ERR("fail to setup tx pipe\n");
 				ret = -EFAULT;

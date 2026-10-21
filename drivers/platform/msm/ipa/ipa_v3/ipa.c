@@ -54,6 +54,7 @@
 #define IPA_UC_SUBSYSTEM_NAME "ipa_uc"
 
 #include "ipa_i.h"
+#include "ipa_diag.h"
 #include "../ipa_rm_i.h"
 #include "ipahal/ipahal.h"
 #include "ipahal/ipahal_fltrt.h"
@@ -7950,8 +7951,10 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_WLAN);
 	int fast = 0;
 	int bypass = 0;
+	int pg_ret;
 	u32 add_map_size;
 	const u32 *add_map;
+	const char *dma_mode = "default";
 	int i;
 	u32 iova_ap_mapping[2];
 
@@ -7975,6 +7978,15 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 							"dma-coherent");
 	cb->dev   = dev;
 	cb->valid = true;
+
+	of_property_read_string(dev->of_node, "qcom,iommu-dma", &dma_mode);
+	pg_ret = ipa3_wdi_pg_init(!strcmp(dma_mode, "atomic"));
+	if (pg_ret) {
+		IPAERR("WLAN WDI page table init failed: %s\n",
+		       pg_ret == -EBUSY ? "wedge" : "alloc");
+		cb->valid = false;
+		return pg_ret;
+	}
 
 	cb->va_start = cb->va_end  = cb->va_size = 0;
 	if (of_property_read_u32_array(
@@ -8008,6 +8020,8 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	  dev, bypass, fast);
 
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_WLAN] = (bypass != 0);
+	pr_err("IPA17 WLANSTATE source=probe bypass=%d fast=%d dma=%s pool_base=0x%x pool_size=0x%x\n",
+		bypass, fast, dma_mode, cb->va_start, cb->va_size);
 
 	/* MAP ipa-uc ram */
 	add_map = of_get_property(dev->of_node,
@@ -8695,10 +8709,152 @@ int ipa3_register_ipa_ready_cb(void (*ipa_ready_cb)(void *), void *user_data)
 	return 0;
 }
 
+/*
+ * Bounded aliases of the live WDI uC mappings. The firmware-visible address
+ * is 0x20000000 + original low IOVA, with the same backing and permissions.
+ */
+#define IPA17_ALIAS_BASE	0x20000000ULL
+#define IPA17_ALIAS_LIMIT	0x40000000ULL
+#define IPA17_ALIAS_MAX		64
+
+struct ipa17_alias {
+	bool used;
+	struct iommu_domain *domain;
+	u64 original;
+	u64 alias;
+	u64 pa;
+	u64 len;
+	u32 prot;
+	u32 object;
+	u64 generation;
+};
+
+static struct ipa17_alias ipa17_aliases[IPA17_ALIAS_MAX];
+static DEFINE_MUTEX(ipa17_alias_lock);
+
+static bool ipa17_alias_overlap(u64 a, u64 alen, u64 b, u64 blen)
+{
+	return a < b + blen && b < a + alen;
+}
+
+int ipa3_diag_alias_map(struct iommu_domain *domain, unsigned long original,
+	phys_addr_t pa, size_t len, int prot, u32 object)
+{
+	u64 o = (u64)original, p = (u64)pa, l = (u64)len;
+	u64 alias = 0;
+	u64 gen = 0;
+	int ret = 0;
+	int i;
+
+	if (!domain || !l || (l & (PAGE_SIZE - 1)) ||
+	    (o & (PAGE_SIZE - 1)) || (p & (PAGE_SIZE - 1))) {
+		ret = -EINVAL;
+		goto report;
+	}
+	if (domain != ipa3_get_uc_smmu_domain()) {
+		ret = -EINVAL;
+		goto report;
+	}
+	/* The whole original range must live below the alias base. */
+	if (o >= IPA17_ALIAS_BASE || l > IPA17_ALIAS_BASE - o) {
+		ret = -ERANGE;
+		goto report;
+	}
+	alias = IPA17_ALIAS_BASE + o;
+	if (alias < IPA17_ALIAS_BASE || l > IPA17_ALIAS_LIMIT - alias) {
+		ret = -ERANGE;
+		goto report;
+	}
+
+	mutex_lock(&ipa17_alias_lock);
+	for (i = 0; i < IPA17_ALIAS_MAX; i++) {
+		struct ipa17_alias *a = &ipa17_aliases[i];
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (!ipa17_alias_overlap(o, l, a->original, a->len))
+			continue;
+		if (o == a->original && p == a->pa && l == a->len &&
+		    prot == (int)a->prot && object == a->object) {
+			mutex_unlock(&ipa17_alias_lock);
+			return 0;
+		}
+		mutex_unlock(&ipa17_alias_lock);
+		ret = -EEXIST;
+		goto report;
+	}
+
+	for (i = 0; i < IPA17_ALIAS_MAX; i++)
+		if (!ipa17_aliases[i].used)
+			break;
+	if (i == IPA17_ALIAS_MAX) {
+		mutex_unlock(&ipa17_alias_lock);
+		ret = -ENOSPC;
+		goto report;
+	}
+
+	ret = ipa3_iommu_map(domain, (unsigned long)alias, (phys_addr_t)p,
+		(size_t)l, prot);
+	if (!ret) {
+		struct ipa17_alias *a = &ipa17_aliases[i];
+
+		gen = ipa_diag_alias_gen_new();
+		a->used = true;
+		a->domain = domain;
+		a->original = o;
+		a->alias = alias;
+		a->pa = p;
+		a->len = l;
+		a->prot = (u32)prot;
+		a->object = object;
+		a->generation = gen;
+	}
+	mutex_unlock(&ipa17_alias_lock);
+
+report:
+	if (ret)
+		ipa_diag_mark_invalid("alias_map_failed");
+	ipa_diag_alias(object, domain, o, alias, p, l, (u32)prot, ret, gen);
+	if (!ret)
+		ipa_diag_alias_state(object, gen, IPA_DIAG_ALIAS_INSTALLED);
+	return ret;
+}
+
+static void ipa3_diag_alias_drop(struct iommu_domain *domain,
+	unsigned long original, size_t size)
+{
+	u64 o = (u64)original, sz = (u64)size;
+	struct ipa17_alias *a;
+	int ret;
+	int i;
+
+	mutex_lock(&ipa17_alias_lock);
+	for (i = 0; i < IPA17_ALIAS_MAX; i++) {
+		a = &ipa17_aliases[i];
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (o < a->original || o + sz > a->original + a->len)
+			continue;
+		ret = iommu_unmap(domain, a->alias, a->len);
+		if ((u64)ret != a->len) {
+			ipa_diag_mark_invalid("alias_unmap_failed");
+			ipa_diag_alias_state(a->object, a->generation,
+				IPA_DIAG_ALIAS_UNMAP_FAILED);
+		} else {
+			ipa_diag_alias_state(a->object, a->generation,
+				IPA_DIAG_ALIAS_UNMAPPED);
+		}
+		a->used = false;
+	}
+	mutex_unlock(&ipa17_alias_lock);
+}
+
 int ipa3_iommu_map(struct iommu_domain *domain,
 	unsigned long iova, phys_addr_t paddr, size_t size, int prot)
 {
 	struct ipa_smmu_cb_ctx *cb = NULL;
+	int ret;
 
 	IPADBG_LOW("domain =0x%pK iova 0x%lx\n", domain, iova);
 	IPADBG_LOW("paddr =0x%pa size 0x%x\n", &paddr, (u32)size);
@@ -8742,7 +8898,19 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	if (cb->is_cache_coherent)
 		prot |= IOMMU_CACHE;
 
-	return iommu_map(domain, iova, paddr, size, prot);
+	ret = iommu_map(domain, iova, paddr, size, prot);
+	return ret;
+}
+
+int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
+	size_t size)
+{
+	size_t unmapped;
+
+	unmapped = iommu_unmap(domain, iova, size);
+	if (domain == ipa3_get_uc_smmu_domain())
+		ipa3_diag_alias_drop(domain, iova, size);
+	return unmapped;
 }
 
 /**
@@ -8764,6 +8932,7 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->shared_cb = false;
+	out->identity_map = false;
 
 	switch (in->smmu_client) {
 	case IPA_SMMU_WLAN_CLIENT:
@@ -8817,6 +8986,13 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->smmu_enable = is_smmu_enable;
+	out->identity_map = in->smmu_client == IPA_SMMU_WLAN_CLIENT &&
+		is_smmu_enable && ipa3_wdi_pg_supported();
+
+	if (in->smmu_client == IPA_SMMU_WLAN_CLIENT)
+		ipa_diag_wlanstate(is_smmu_enable,
+			ipa3_ctx->ipa_wdi3_over_gsi ||
+			ipa3_ctx->ipa_wdi2_over_gsi);
 
 	return 0;
 }

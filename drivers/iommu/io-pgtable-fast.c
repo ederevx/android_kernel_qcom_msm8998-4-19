@@ -366,6 +366,71 @@ phys_addr_t av8l_fast_iova_to_phys_public(struct io_pgtable_ops *ops,
 	return av8l_fast_iova_to_phys(ops, iova);
 }
 
+/*
+ * Repeat the existing av8l_fast walk and keep every descriptor it consumed
+ * instead of only the final physical address. The table reads and their
+ * locking model are the ones the lookup already uses; nothing is added to the
+ * mapping path.
+ */
+int av8l_fast_iova_walk_public(struct io_pgtable_ops *ops, unsigned long iova,
+			       struct av8l_fast_walk *w)
+{
+	struct av8l_fast_io_pgtable *data;
+	av8l_fast_iopte pte, *pgdp, *pudp, *pmdp;
+	unsigned long pgd;
+	phys_addr_t table;
+	const unsigned long pts = AV8L_FAST_PTE_TYPE_SHIFT;
+	const unsigned long ptm = AV8L_FAST_PTE_TYPE_MASK;
+	const unsigned long ptt = AV8L_FAST_PTE_TYPE_TABLE;
+	const unsigned long ptp = AV8L_FAST_PTE_TYPE_PAGE;
+	const av8l_fast_iopte am = AV8L_FAST_PTE_ADDR_MASK;
+
+	if (!ops || !w || ops->iova_to_phys != av8l_fast_iova_to_phys)
+		return -EOPNOTSUPP;
+
+	memset(w, 0, sizeof(*w));
+	data = iof_pgtable_ops_to_data(ops);
+
+	pgd = (unsigned long)data->pgd | FAST_PGDNDX(iova);
+	pgdp = (av8l_fast_iopte *)pgd;
+	pte = *pgdp;
+	w->level[0] = 1;
+	w->table[0] = (phys_addr_t)(uintptr_t)data->pgd;
+	w->index[0] = FAST_PGDNDX(iova);
+	w->desc[0] = pte;
+	w->n = 1;
+	if (((pte >> pts) & ptm) != ptt) {
+		w->terminal[0] = 1;
+		return 0;
+	}
+
+	table = pte & am;
+	pudp = phys_to_virt((pte & am) | ((iova & 0x3fe00000) >> 18));
+	pte = *pudp;
+	w->level[1] = 2;
+	w->table[1] = table;
+	w->index[1] = (iova & 0x3fe00000) >> 18;
+	w->desc[1] = pte;
+	w->n = 2;
+	if (((pte >> pts) & ptm) != ptt) {
+		w->terminal[1] = 1;
+		return 0;
+	}
+
+	table = pte & am;
+	pmdp = phys_to_virt((pte & am) | ((iova & 0x1ff000) >> 9));
+	pte = *pmdp;
+	w->level[2] = 3;
+	w->table[2] = table;
+	w->index[2] = (iova & 0x1ff000) >> 9;
+	w->desc[2] = pte;
+	w->n = 3;
+	if (((pte >> pts) & ptm) != ptp)
+		w->terminal[2] = 1;
+
+	return 0;
+}
+
 static bool av8l_fast_iova_coherent(struct io_pgtable_ops *ops,
 					unsigned long iova)
 {

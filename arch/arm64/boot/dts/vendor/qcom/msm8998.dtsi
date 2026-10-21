@@ -1542,7 +1542,8 @@
 		ipa_smmu_wlan: ipa_smmu_wlan {
 			compatible = "qcom,ipa-smmu-wlan-cb";
 			iommus = <&anoc2_smmu 0x18e1>;
-			qcom,iommu-dma = "bypass";
+			/* atomic power mode only; icnss bypass is separate. */
+			qcom,iommu-dma = "atomic";
 			qcom,additional-mapping =
 				<0x1E60000 0x1E60000 0x80000>;
 		};

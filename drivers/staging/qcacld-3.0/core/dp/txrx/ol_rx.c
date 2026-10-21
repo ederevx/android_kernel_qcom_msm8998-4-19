@@ -655,6 +655,9 @@ ol_rx_indication_handler(ol_txrx_pdev_handle pdev,
 					peer->last_pkt_center_freq = 0;
 				}
 
+				if (!head_msdu)
+					continue;
+
 				/* Pktlog */
 				ol_rx_send_pktlog_event(pdev, peer,
 							head_msdu, 1);
@@ -704,6 +707,8 @@ ol_rx_indication_handler(ol_txrx_pdev_handle pdev,
 				rx_mpdu_desc =
 					htt_rx_mpdu_desc_list_next(htt_pdev,
 								   rx_ind_msg);
+				if (!msdu)
+					continue;
 				OL_RX_ERR_STATISTICS_2(pdev, vdev, peer,
 						       rx_mpdu_desc, msdu,
 						       status);

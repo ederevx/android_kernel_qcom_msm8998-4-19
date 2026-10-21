@@ -899,10 +899,13 @@ static void ipa_save_uc_smmu_mapping_sgt(int res_idx, struct sg_table *sgt,
 	}
 }
 
+static size_t ipa_uc_diag_map_len;
+
 int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		phys_addr_t pa, struct sg_table *sgt, size_t len, bool device,
 		unsigned long *iova)
 {
+	ipa_uc_diag_map_len = 0;
 	/* support for SMMU on WLAN but no SMMU on IPA */
 	if (wlan_smmu_en && ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC]) {
 		IPAERR("Unsupported SMMU pairing\n");
@@ -912,6 +915,7 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 	/* legacy: no SMMUs on either end */
 	if (!wlan_smmu_en && ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC]) {
 		*iova = pa;
+		ipa_uc_diag_map_len = len;
 		return 0;
 	}
 
@@ -942,6 +946,8 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 				return -EFAULT;
 			}
 			ipa_save_uc_smmu_mapping_pa(res_idx, pa, *iova, len);
+			ipa_uc_diag_map_len = roundup(len + pa -
+				rounddown(pa, PAGE_SIZE), PAGE_SIZE);
 			break;
 		case IPA_WDI_RX_RING_RES:
 		case IPA_WDI_RX_COMP_RING_RES:
@@ -954,6 +960,14 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 				return -EFAULT;
 			}
 			ipa_save_uc_smmu_mapping_sgt(res_idx, sgt, *iova);
+			{
+				struct scatterlist *sg;
+				int i;
+				size_t n = 0;
+				for_each_sg(sgt->sgl, sg, sgt->nents, i)
+					n += PAGE_ALIGN(sg->offset + sg->length);
+				ipa_uc_diag_map_len = n;
+			}
 			break;
 		default:
 			WARN_ON(1);
@@ -1849,19 +1863,20 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)tx_2->comp_ring_base_pa_hi << 32) |
 				tx_2->comp_ring_base_pa,
-				in->u.dl_smmu.comp_ring_size);
+				(u32)ipa_uc_diag_map_len);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_CE_RING_RES,
 				(u64)(uintptr_t)in->u.dl_smmu.ce_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)tx_2->ce_ring_base_pa_hi << 32) |
 				tx_2->ce_ring_base_pa,
-				in->u.dl_smmu.ce_ring_size);
+				(u32)ipa_uc_diag_map_len);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_CE_DB_RES,
 				in->u.dl_smmu.ce_door_bell_pa,
 				IPA_DIAG_WLAN_PA | IPA_DIAG_WLAN_MAPPED,
 				IPA_DIAG_CTX_UC,
 				((u64)tx_2->ce_ring_doorbell_pa_hi << 32) |
-				tx_2->ce_ring_doorbell_pa, 4);
+				tx_2->ce_ring_doorbell_pa,
+				(u32)ipa_uc_diag_map_len);
 			IPA_WDI_DIAG("setup dir=tx wdi=2 op=%u ep=%d smmu=%d "
 				"cmd_dma=%016llx cmd_arg=%08x "
 				"comp=%08x:%08x csz=%u ce=%08x:%08x cesz=%u "
@@ -2085,26 +2100,28 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_ring_base_pa_hi << 32) |
 				rx_2->rx_ring_base_pa,
-				in->u.ul_smmu.rdy_ring_size);
+				(u32)ipa_uc_diag_map_len);
 			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_RX_RING_RP_RES,
 				in->u.ul_smmu.rdy_ring_rp_pa,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_ring_rp_pa_hi << 32) |
-				rx_2->rx_ring_rp_pa, 4);
+				rx_2->rx_ring_rp_pa,
+				(u32)ipa_uc_diag_map_len);
 			ipa_diag_wlanaddr(ipa_ep_idx,
 				IPA_WDI_RX_COMP_RING_RES,
 				(u64)(uintptr_t)in->u.ul_smmu.rdy_comp_ring.sgl,
 				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_comp_ring_base_pa_hi << 32) |
 				rx_2->rx_comp_ring_base_pa,
-				in->u.ul_smmu.rdy_comp_ring_size);
+				(u32)ipa_uc_diag_map_len);
 			ipa_diag_wlanaddr(ipa_ep_idx,
 				IPA_WDI_RX_COMP_RING_WP_RES,
 				in->u.ul_smmu.rdy_comp_ring_wp_pa,
 				IPA_DIAG_WLAN_PA | IPA_DIAG_WLAN_MAPPED,
 				IPA_DIAG_CTX_UC,
 				((u64)rx_2->rx_comp_ring_wp_pa_hi << 32) |
-				rx_2->rx_comp_ring_wp_pa, 4);
+				rx_2->rx_comp_ring_wp_pa,
+				(u32)ipa_uc_diag_map_len);
 			IPA_WDI_DIAG("setup dir=rx wdi=2 op=%u ep=%d smmu=%d "
 				"cmd_dma=%016llx cmd_arg=%08x "
 				"rx=%08x:%08x rsz=%u rp=%08x:%08x "
@@ -3319,6 +3336,8 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	}
 
 	for (i = 0; i < num_buffers; i++) {
+		ipa_diag_wlanmap(-1, (u64)info[i].iova, 0, 0,
+			(u32)info[i].size, 0, 0);
 		IPADBG_LOW("i=%d pa=0x%pa iova=0x%lx sz=0x%zx\n", i,
 			&info[i].pa, info[i].iova, info[i].size);
 		info[i].result = ipa3_iommu_map(cb->iommu_domain,

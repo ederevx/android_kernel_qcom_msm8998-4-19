@@ -124,7 +124,6 @@ int ipa_wdi_init(struct ipa_wdi_init_in_params *in,
 	else
 		out->is_over_gsi = false;
 #endif
-	ipa_diag_wlanstate(out->is_smmu_enabled, out->is_over_gsi);
 	return 0;
 }
 EXPORT_SYMBOL(ipa_wdi_init);

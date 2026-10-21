@@ -24,6 +24,7 @@ enum ipa_diag_stage {
 	IPA_DIAG_ALIAS_STATE,
 	IPA_DIAG_WDIADDR,
 	IPA_DIAG_WLANADDR,
+	IPA_DIAG_WLANMAP,
 };
 
 enum ipa_diag_phase {
@@ -116,6 +117,8 @@ void ipa_diag_wdiaddr(u32 pipe, u32 object, u32 field_off, u64 submitted);
 void ipa_diag_wlanaddr(u32 pipe, u32 object, u64 supplied, u32 flags,
 	u32 context, u64 iova, u32 len);
 void ipa_diag_wlanstate(u32 enabled, u32 over_gsi);
+void ipa_diag_wlanmap(s32 pipe, u64 supplied, u32 is_pa, u64 iova,
+	u32 len, int ret, u32 phase);
 void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 	u32 fsynr0, u32 fsynr1, u32 cbfrsynra, u32 smr_idx, u64 ns,
 	int report_ret);

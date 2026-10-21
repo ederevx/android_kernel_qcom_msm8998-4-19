@@ -8972,6 +8972,11 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 
 	out->smmu_enable = is_smmu_enable;
 
+	if (in->smmu_client == IPA_SMMU_WLAN_CLIENT)
+		ipa_diag_wlanstate(is_smmu_enable,
+			ipa3_ctx->ipa_wdi3_over_gsi ||
+			ipa3_ctx->ipa_wdi2_over_gsi);
+
 	return 0;
 }
 

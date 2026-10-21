@@ -255,6 +255,26 @@ void ipa_diag_wlanaddr(u32 pipe, u32 object, u64 supplied, u32 flags,
 		ipa_diag_range_add(IPA_DIAG_FAULT_WLAN, object, iova, len);
 }
 
+void ipa_diag_wlanmap(s32 pipe, u64 supplied, u32 is_pa, u64 iova,
+	u32 len, int ret, u32 phase)
+{
+	struct ipa_diag_rec r = {
+		.submitted_raw = supplied,
+		.decoded_addr = iova,
+		.length = len,
+		.pipe = pipe,
+		.ret = ret,
+		.a = is_pa,
+		.phase = (u8)phase,
+		.stage = IPA_DIAG_WLANMAP,
+	};
+
+	pr_info("IPA17 WLANMAP pipe=%d supplied=%#llx kind=%u iova=%#llx len=%#x ret=%d phase=%u\n",
+		pipe, (unsigned long long)supplied, is_pa,
+		(unsigned long long)iova, len, ret, phase);
+	ipa_diag_record(&r);
+}
+
 void ipa_diag_wlanstate(u32 enabled, u32 over_gsi)
 {
 	pr_info("IPA17 WLANSTATE smmu_enabled=%u over_gsi=%u\n",

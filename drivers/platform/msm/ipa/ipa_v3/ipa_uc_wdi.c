@@ -7,6 +7,7 @@
 #include <linux/dmapool.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
+#include <linux/workqueue.h>
 #include <linux/hashtable.h>
 #include <linux/vmalloc.h>
 #include "ipa_qmi_service.h"
@@ -38,6 +39,61 @@ struct ipa_wdi_res {
 static struct ipa_wdi_res wdi_res[IPA_WDI_MAX_RES];
 
 static void ipa3_uc_wdi_loaded_handler(void);
+static u32 ipa3_wdi_pg_outstanding(void);
+
+static atomic_t dg_wm_calls = ATOMIC_INIT(0);
+static atomic_t dg_wm_fail = ATOMIC_INIT(0);
+static atomic_t dg_wr_calls = ATOMIC_INIT(0);
+static atomic_t dg_wr_fail = ATOMIC_INIT(0);
+static atomic_t dg_hi4g = ATOMIC_INIT(0);
+static unsigned long dg_pa_max;
+static int dg_last_err;
+static unsigned int ipadiag_hb_n;
+static bool ipadiag_hb_on;
+
+static void ipadiag_hb_fn(struct work_struct *w);
+static DECLARE_DELAYED_WORK(ipadiag_hb, ipadiag_hb_fn);
+
+static void ipadiag_hb_fn(struct work_struct *w)
+{
+	struct IpaHwStatsWDIInfoData_t st;
+	int tx = ipa3_get_ep_mapping(IPA_CLIENT_WLAN1_CONS);
+	int rx = ipa3_get_ep_mapping(IPA_CLIENT_WLAN1_PROD);
+	u32 txs = tx >= 0 ? ipa3_ctx->ep[tx].uc_offload_state : 0xff;
+	u32 rxs = rx >= 0 ? ipa3_ctx->ep[rx].uc_offload_state : 0xff;
+
+	pr_info("IPADIAG hb n=%u mapcnt=%u pglive=%u wm=%d/%d last=%d hi4g=%d pamax=0x%lx wr=%d/%d ucf=%d uce=%u pend=%u tx=0x%x rx=0x%x\n",
+		ipadiag_hb_n, ipa3_ctx->wdi_map_cnt, ipa3_wdi_pg_outstanding(),
+		atomic_read(&dg_wm_calls), atomic_read(&dg_wm_fail), dg_last_err,
+		atomic_read(&dg_hi4g), dg_pa_max,
+		atomic_read(&dg_wr_calls), atomic_read(&dg_wr_fail),
+		ipa3_ctx->uc_ctx.uc_failed, ipa3_ctx->uc_ctx.uc_error_type,
+		ipa3_ctx->uc_ctx.pending_cmd, txs, rxs);
+	if (txs != 0xff && rxs != 0xff && ((txs | rxs) & IPA_WDI_CONNECTED)) {
+		pr_info("IPADIAG hb n=%u sram-read\n", ipadiag_hb_n);
+		if (ipa3_ctx->uc_wdi_ctx.wdi_uc_stats_mmio &&
+		    !ipa3_get_wdi_stats(&st))
+			pr_info("IPADIAG hb n=%u txp=%u txdbf=%u txbamfull=%u rxp=%u rxrp=%u rxdb=%u rxuninit=%u\n",
+				ipadiag_hb_n,
+				st.tx_ch_stats.num_pkts_processed,
+				st.tx_ch_stats.num_db_fired,
+				st.tx_ch_stats.bam_stats.bamFifoFull,
+				st.rx_ch_stats.num_pkts_processed,
+				st.rx_ch_stats.rx_ring_rp_value,
+				st.rx_ch_stats.num_db,
+				st.rx_ch_stats.num_pkts_in_dis_uninit_state);
+	}
+	if (++ipadiag_hb_n < 36)
+		schedule_delayed_work(&ipadiag_hb, 5 * HZ);
+}
+
+static void ipadiag_hb_kick(void)
+{
+	if (!READ_ONCE(ipadiag_hb_on)) {
+		WRITE_ONCE(ipadiag_hb_on, true);
+		schedule_delayed_work(&ipadiag_hb, 5 * HZ);
+	}
+}
 
 /**
  * enum ipa_hw_2_cpu_wdi_events - Values that represent HW event to be sent to
@@ -396,14 +452,14 @@ static void ipa3_uc_wdi_event_handler(struct IpaHwSharedMemCommonMapping_t
 	if (uc_sram_mmio->eventOp ==
 		IPA_HW_2_CPU_EVENT_WDI_ERROR) {
 		wdi_evt.raw32b = uc_sram_mmio->eventParams;
-		IPADBG("uC WDI evt errType=%u pipe=%d cherrType=%u\n",
+		IPAERR("uC WDI evt errType=%u pipe=%d cherrType=%u\n",
 			wdi_evt.params.wdi_error_type,
 			wdi_evt.params.ipa_pipe_number,
 			wdi_evt.params.wdi_ch_err_type);
 		wdi_sram_mmio_ext =
 			(struct IpaHwSharedMemWdiMapping_t *)
 			uc_sram_mmio;
-		IPADBG("tx_ch_state=%u rx_ch_state=%u\n",
+		IPAERR("tx_ch_state=%u rx_ch_state=%u\n",
 			wdi_sram_mmio_ext->wdi_tx_ch_0_state,
 			wdi_sram_mmio_ext->wdi_rx_ch_0_state);
 	}
@@ -931,6 +987,10 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		WARN_ON(1);
 	}
 
+	pr_info("IPADIAG ucmap res=%d iova=0x%lx alias=0x%lx pa=%pa len=0x%zx nents=%u next=0x%lx\n",
+		res_idx, *iova, *iova + 0x20000000UL, &pa, len,
+		sgt ? sgt->nents : 1,
+		ipa3_get_smmu_ctx(IPA_SMMU_CB_UC)->next_addr);
 	return 0;
 }
 
@@ -2090,12 +2150,17 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base, cmd.phys_base);
 	ep->uc_offload_state |= IPA_WDI_CONNECTED;
 	IPADBG("client %d (ep: %d) connected\n", in->sys.client, ipa_ep_idx);
+	pr_info("IPADIAG connect client=%d ep=%d ok\n", in->sys.client,
+		ipa_ep_idx);
+	ipadiag_hb_kick();
 
 	return 0;
 
 ipa_cfg_ep_fail:
 	memset(&ipa3_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa3_ep_context));
 uc_timeout:
+	pr_info("IPADIAG connect client=%d fail=%d\n", in->sys.client,
+		result);
 	ipa_release_uc_smmu_mappings(in->sys.client);
 	dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base, cmd.phys_base);
 dma_alloc_fail:
@@ -2213,6 +2278,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 		IPADBG("uc_wdi_ctx.stats_notify already null\n");
 
 uc_timeout:
+	pr_info("IPADIAG disconnect clnt=%u ret=%d\n", clnt_hdl, result);
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
 	return result;
 }
@@ -2407,6 +2473,7 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 
 	ep->uc_offload_state |= IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) enabled\n", clnt_hdl);
+	pr_info("IPADIAG enable clnt=%u ret=%d\n", clnt_hdl, result);
 
 uc_timeout:
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
@@ -2512,6 +2579,7 @@ int ipa3_disable_wdi_pipe(u32 clnt_hdl)
 	}
 	ep->uc_offload_state &= ~IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) disabled\n", clnt_hdl);
+	pr_info("IPADIAG disable clnt=%u ret=%d\n", clnt_hdl, result);
 	ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain());
 
 uc_timeout:
@@ -2646,6 +2714,7 @@ int ipa3_resume_wdi_pipe(u32 clnt_hdl)
 
 	ep->uc_offload_state |= IPA_WDI_RESUMED;
 	IPADBG("client (ep: %d) resumed\n", clnt_hdl);
+	pr_info("IPADIAG resume clnt=%u ret=%d\n", clnt_hdl, result);
 
 uc_timeout:
 	return result;
@@ -2879,6 +2948,7 @@ int ipa3_suspend_wdi_pipe(u32 clnt_hdl)
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
 	ep->uc_offload_state &= ~IPA_WDI_RESUMED;
 	IPADBG("client (ep: %d) suspended\n", clnt_hdl);
+	pr_info("IPADIAG suspend clnt=%u ret=%d\n", clnt_hdl, result);
 
 uc_timeout:
 	return result;
@@ -3387,14 +3457,24 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	if (!info)
 		return -EINVAL;
 
+	atomic_inc(&dg_wm_calls);
+	for (i = 0; i < num_buffers; i++) {
+		if (info[i].pa >= 0x100000000ULL)
+			atomic_inc(&dg_hi4g);
+		if ((unsigned long)info[i].pa > dg_pa_max)
+			dg_pa_max = info[i].pa;
+	}
+
 	if (!cb->valid) {
 		IPAERR("No SMMU CB setup\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_WLAN]) {
 		IPAERR("IPA SMMU not enabled\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (!ipa3_wdi_pg_supported()) {
@@ -3417,14 +3497,16 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 
 	if (!READ_ONCE(ipa3_wdi_pg.pool)) {
 		ipa3_wdi_pg_fail(info, num_buffers, -EINVAL);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	/* Identity only: the buffer is mapped at its own physical address. */
 	for (i = 0; i < num_buffers; i++) {
 		if (info[i].iova != (unsigned long)info[i].pa) {
 			ipa3_wdi_pg_fail(info, num_buffers, -EINVAL);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 	}
 
@@ -3474,6 +3556,16 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	}
 
 out:
+	if (ret) {
+		static bool dg_wm_once;
+
+		atomic_inc(&dg_wm_fail);
+		dg_last_err = ret;
+		if (!xchg(&dg_wm_once, true))
+			pr_info("IPADIAG wmap fail ret=%d n=%u pa0=%pa iova0=0x%lx sz0=0x%zx\n",
+				ret, num_buffers, &info[0].pa,
+				(unsigned long)info[0].iova, info[0].size);
+	}
 	return ret;
 }
 
@@ -3488,8 +3580,12 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	if (!info)
 		return -EINVAL;
 
+	atomic_inc(&dg_wr_calls);
+
 	if (!cb->valid) {
 		IPAERR("No SMMU CB setup\n");
+		atomic_inc(&dg_wr_fail);
+		dg_last_err = -EINVAL;
 		return -EINVAL;
 	}
 
@@ -3509,6 +3605,8 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 
 	if (!READ_ONCE(ipa3_wdi_pg.pool)) {
 		ipa3_wdi_pg_fail(info, num_buffers, -EINVAL);
+		atomic_inc(&dg_wr_fail);
+		dg_last_err = -EINVAL;
 		return -EINVAL;
 	}
 
@@ -3539,5 +3637,9 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 	if (first_ret == -ENOENT)
 		first_ret = 0;
 
+	if (first_ret) {
+		atomic_inc(&dg_wr_fail);
+		dg_last_err = first_ret;
+	}
 	return first_ret;
 }

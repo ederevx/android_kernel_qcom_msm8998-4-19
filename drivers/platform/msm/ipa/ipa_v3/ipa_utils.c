@@ -4195,12 +4195,27 @@ int ipa3_init_hw(void)
 	return 0;
 }
 
-/**
- * ipa3_get_ep_mapping() - provide endpoint mapping
- * @client: client type
- *
- * Return value: endpoint mapping
- */
+void ipa3_diag_wlan_map(void)
+{
+	u8 hw_idx = ipa3_get_hw_type_index();
+	const struct ipa_ep_configuration *m = ipa3_ep_mapping[hw_idx];
+
+	pr_err("IPA17 WLANMAP hw=%u W1P=%d/%d W1C=%d/%d AMPDU=%d/%d W2C=%d/%d W3C=%d/%d W4C=%d/%d\n",
+		hw_idx,
+		m[IPA_CLIENT_WLAN1_PROD].valid,
+		m[IPA_CLIENT_WLAN1_PROD].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN1_CONS].valid,
+		m[IPA_CLIENT_WLAN1_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_A5_WLAN_AMPDU_PROD].valid,
+		m[IPA_CLIENT_A5_WLAN_AMPDU_PROD].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN2_CONS].valid,
+		m[IPA_CLIENT_WLAN2_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN3_CONS].valid,
+		m[IPA_CLIENT_WLAN3_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN4_CONS].valid,
+		m[IPA_CLIENT_WLAN4_CONS].ipa_gsi_ep_info.ipa_ep_num);
+}
+
 void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag)
 {
 	u8 hw_idx = ipa3_get_hw_type_index();
@@ -4226,6 +4241,12 @@ void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag)
 		m ? m->ipa_gsi_ep_info.ipa_ep_num : -1, valid);
 }
 
+/**
+ * ipa3_get_ep_mapping() - provide endpoint mapping
+ * @client: client type
+ *
+ * Return value: endpoint mapping
+ */
 int ipa3_get_ep_mapping(enum ipa_client_type client)
 {
 	int ipa_ep_idx;

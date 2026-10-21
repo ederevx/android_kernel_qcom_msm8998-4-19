@@ -2805,6 +2805,7 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt);
  */
 int ipa3_get_ep_mapping(enum ipa_client_type client);
 void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag);
+void ipa3_diag_wlan_map(void);
 
 bool ipa3_is_ready(void);
 

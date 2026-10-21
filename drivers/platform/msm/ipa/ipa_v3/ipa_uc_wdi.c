@@ -1670,6 +1670,7 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	if (result)
 		return result;
 
+	ipa3_diag_wlan_map();
 	ipa3_diag_ep_map(in->sys.client, "connect-pre");
 	ipa_ep_idx = ipa3_get_ep_mapping(in->sys.client);
 	if (ipa_ep_idx == -1) {

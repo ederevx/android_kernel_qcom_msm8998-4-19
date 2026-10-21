@@ -172,89 +172,6 @@ static u32 ipa_diag_range_match(u64 far, u64 *base, u32 *object)
 /* ------------------------------------------------------------------ */
 /* WDI enable.                                                         */
 
-static atomic64_t ipa_diag_enable_seq = ATOMIC64_INIT(0);
-
-u64 ipa_diag_enable_begin(u32 pipe, u32 ready)
-{
-	u64 seq = (u64)atomic64_inc_return(&ipa_diag_enable_seq);
-	struct ipa_diag_rec r = {
-		.generation = seq,
-		.submitted_raw = (u64)ktime_get_ns(),
-		.slot = pipe,
-		.pipe = (s32)pipe,
-		.a = ready,
-		.phase = 0,
-		.stage = IPA_DIAG_ENABLE,
-	};
-
-	pr_info("IPA17 ENABLE seq=%llu pipe=%u ready=%#x event=enter\n",
-		(unsigned long long)seq, pipe, ready);
-	ipa_diag_record(&r);
-	return seq;
-}
-
-void ipa_diag_enable_phase(u64 seq, u32 pipe, u32 ready, int phase,
-	int command_ret)
-{
-	struct ipa_diag_rec r = {
-		.generation = seq,
-		.submitted_raw = (u64)ktime_get_ns(),
-		.slot = pipe,
-		.pipe = (s32)pipe,
-		.ret = command_ret,
-		.a = ready,
-		.phase = (u8)phase,
-		.stage = IPA_DIAG_ENABLE,
-	};
-
-	pr_info("IPA17 ENABLE seq=%llu pipe=%u ready=%#x event=%d ret=%d\n",
-		(unsigned long long)seq, pipe, ready, phase, command_ret);
-	ipa_diag_record(&r);
-}
-
-/* ------------------------------------------------------------------ */
-/* WDI set-up fields and WLAN-supplied addresses.                      */
-
-void ipa_diag_wdiaddr(u32 pipe, u32 object, u32 field_off, u64 submitted)
-{
-	struct ipa_diag_rec r = {
-		.submitted_raw = submitted,
-		.image_byte_offset = field_off,
-		.slot = pipe,
-		.pipe = (s32)pipe,
-		.a = object,
-		.stage = IPA_DIAG_WDIADDR,
-	};
-
-	pr_info("IPA17 WDIADDR pipe=%u object=%u field_off=%u submitted=%#llx\n",
-		pipe, object, field_off, (unsigned long long)submitted);
-	ipa_diag_record(&r);
-}
-
-void ipa_diag_wlanaddr(u32 pipe, u32 object, u64 supplied, u32 flags,
-	u32 context, u64 iova, u32 len)
-{
-	struct ipa_diag_rec r = {
-		.submitted_raw = supplied,
-		.decoded_addr = iova,
-		.length = len,
-		.slot = context,
-		.pipe = (s32)pipe,
-		.a = object,
-		.b = flags,
-		.stage = IPA_DIAG_WLANADDR,
-	};
-
-	pr_info("IPA17 WLANADDR pipe=%u object=%u supplied=%#llx flags=%#x context=%u iova=%#llx len=%#x\n",
-		pipe, object, (unsigned long long)supplied, flags, context,
-		(unsigned long long)iova, len);
-	ipa_diag_record(&r);
-
-	ipa_diag_range_add(IPA_DIAG_FAULT_WLAN, object, supplied, len);
-	if ((flags & IPA_DIAG_WLAN_MAPPED) && iova)
-		ipa_diag_range_add(IPA_DIAG_FAULT_WLAN, object, iova, len);
-}
-
 void ipa_diag_wlanmap(s32 pipe, u64 supplied, u32 is_pa, u64 iova,
 	u32 len, int ret, u32 phase)
 {
@@ -277,7 +194,7 @@ void ipa_diag_wlanmap(s32 pipe, u64 supplied, u32 is_pa, u64 iova,
 
 void ipa_diag_wlanstate(u32 enabled, u32 over_gsi)
 {
-	pr_info("IPA17 WLANSTATE smmu_enabled=%u over_gsi=%u\n",
+	pr_err("IPA17 WLANSTATE source=params smmu_enabled=%u over_gsi=%u\n",
 		enabled, over_gsi);
 }
 

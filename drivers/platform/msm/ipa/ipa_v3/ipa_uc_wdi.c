@@ -899,13 +899,10 @@ static void ipa_save_uc_smmu_mapping_sgt(int res_idx, struct sg_table *sgt,
 	}
 }
 
-static size_t ipa_uc_diag_map_len;
-
 int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		phys_addr_t pa, struct sg_table *sgt, size_t len, bool device,
 		unsigned long *iova)
 {
-	ipa_uc_diag_map_len = 0;
 	/* support for SMMU on WLAN but no SMMU on IPA */
 	if (wlan_smmu_en && ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC]) {
 		IPAERR("Unsupported SMMU pairing\n");
@@ -915,7 +912,6 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 	/* legacy: no SMMUs on either end */
 	if (!wlan_smmu_en && ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC]) {
 		*iova = pa;
-		ipa_uc_diag_map_len = len;
 		return 0;
 	}
 
@@ -946,8 +942,6 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 				return -EFAULT;
 			}
 			ipa_save_uc_smmu_mapping_pa(res_idx, pa, *iova, len);
-			ipa_uc_diag_map_len = roundup(len + pa -
-				rounddown(pa, PAGE_SIZE), PAGE_SIZE);
 			break;
 		case IPA_WDI_RX_RING_RES:
 		case IPA_WDI_RX_COMP_RING_RES:
@@ -966,7 +960,6 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 				size_t n = 0;
 				for_each_sg(sgt->sgl, sg, sgt->nents, i)
 					n += PAGE_ALIGN(sg->offset + sg->length);
-				ipa_uc_diag_map_len = n;
 			}
 			break;
 		default:
@@ -1849,34 +1842,6 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->u.dl_smmu.num_tx_buffers :
 				in->u.dl.num_tx_buffers;
 			tx_2->ipa_pipe_number = ipa_ep_idx;
-			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_TX_RING_RES, 0,
-				((u64)tx_2->comp_ring_base_pa_hi << 32) |
-				tx_2->comp_ring_base_pa);
-			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_CE_RING_RES, 12,
-				((u64)tx_2->ce_ring_base_pa_hi << 32) |
-				tx_2->ce_ring_base_pa);
-			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_CE_DB_RES, 24,
-				((u64)tx_2->ce_ring_doorbell_pa_hi << 32) |
-				tx_2->ce_ring_doorbell_pa);
-			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_TX_RING_RES,
-				(u64)(uintptr_t)in->u.dl_smmu.comp_ring.sgl,
-				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
-				((u64)tx_2->comp_ring_base_pa_hi << 32) |
-				tx_2->comp_ring_base_pa,
-				(u32)ipa_uc_diag_map_len);
-			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_CE_RING_RES,
-				(u64)(uintptr_t)in->u.dl_smmu.ce_ring.sgl,
-				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
-				((u64)tx_2->ce_ring_base_pa_hi << 32) |
-				tx_2->ce_ring_base_pa,
-				(u32)ipa_uc_diag_map_len);
-			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_CE_DB_RES,
-				in->u.dl_smmu.ce_door_bell_pa,
-				IPA_DIAG_WLAN_PA | IPA_DIAG_WLAN_MAPPED,
-				IPA_DIAG_CTX_UC,
-				((u64)tx_2->ce_ring_doorbell_pa_hi << 32) |
-				tx_2->ce_ring_doorbell_pa,
-				(u32)ipa_uc_diag_map_len);
 			IPA_WDI_DIAG("setup dir=tx wdi=2 op=%u ep=%d smmu=%d "
 				"cmd_dma=%016llx cmd_arg=%08x "
 				"comp=%08x:%08x csz=%u ce=%08x:%08x cesz=%u "
@@ -2081,47 +2046,6 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					rx_2->rx_comp_ring_wp_pa_hi,
 					rx_2->rx_comp_ring_wp_pa);
 			rx_2->ipa_pipe_number = ipa_ep_idx;
-			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_RX_RING_RES, 0,
-				((u64)rx_2->rx_ring_base_pa_hi << 32) |
-				rx_2->rx_ring_base_pa);
-			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_RX_RING_RP_RES,
-				12, ((u64)rx_2->rx_ring_rp_pa_hi << 32) |
-				rx_2->rx_ring_rp_pa);
-			ipa_diag_wdiaddr(ipa_ep_idx,
-				IPA_WDI_RX_COMP_RING_RES, 20,
-				((u64)rx_2->rx_comp_ring_base_pa_hi << 32) |
-				rx_2->rx_comp_ring_base_pa);
-			ipa_diag_wdiaddr(ipa_ep_idx,
-				IPA_WDI_RX_COMP_RING_WP_RES, 32,
-				((u64)rx_2->rx_comp_ring_wp_pa_hi << 32) |
-				rx_2->rx_comp_ring_wp_pa);
-			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_RX_RING_RES,
-				(u64)(uintptr_t)in->u.ul_smmu.rdy_ring.sgl,
-				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
-				((u64)rx_2->rx_ring_base_pa_hi << 32) |
-				rx_2->rx_ring_base_pa,
-				(u32)ipa_uc_diag_map_len);
-			ipa_diag_wlanaddr(ipa_ep_idx, IPA_WDI_RX_RING_RP_RES,
-				in->u.ul_smmu.rdy_ring_rp_pa,
-				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
-				((u64)rx_2->rx_ring_rp_pa_hi << 32) |
-				rx_2->rx_ring_rp_pa,
-				(u32)ipa_uc_diag_map_len);
-			ipa_diag_wlanaddr(ipa_ep_idx,
-				IPA_WDI_RX_COMP_RING_RES,
-				(u64)(uintptr_t)in->u.ul_smmu.rdy_comp_ring.sgl,
-				IPA_DIAG_WLAN_MAPPED, IPA_DIAG_CTX_UC,
-				((u64)rx_2->rx_comp_ring_base_pa_hi << 32) |
-				rx_2->rx_comp_ring_base_pa,
-				(u32)ipa_uc_diag_map_len);
-			ipa_diag_wlanaddr(ipa_ep_idx,
-				IPA_WDI_RX_COMP_RING_WP_RES,
-				in->u.ul_smmu.rdy_comp_ring_wp_pa,
-				IPA_DIAG_WLAN_PA | IPA_DIAG_WLAN_MAPPED,
-				IPA_DIAG_CTX_UC,
-				((u64)rx_2->rx_comp_ring_wp_pa_hi << 32) |
-				rx_2->rx_comp_ring_wp_pa,
-				(u32)ipa_uc_diag_map_len);
 			IPA_WDI_DIAG("setup dir=rx wdi=2 op=%u ep=%d smmu=%d "
 				"cmd_dma=%016llx cmd_arg=%08x "
 				"rx=%08x:%08x rsz=%u rp=%08x:%08x "
@@ -2546,7 +2470,6 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	struct ipa3_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t enable;
 	struct ipa_ep_cfg_holb holb_cfg;
-	u64 seq;
 #ifdef CONFIG_ARCH_MSM8998
 	struct ipahal_reg_endp_init_rsrc_grp rsrc_grp;
 #endif
@@ -2575,17 +2498,10 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 	enable.params.ipa_pipe_number = clnt_hdl;
 
-	seq = ipa_diag_enable_begin(clnt_hdl, ep->uc_offload_state);
-	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
-		IPA_DIAG_PHASE_CHECKPOINT_EXIT, 0);
-	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
-		IPA_DIAG_PHASE_COMMAND_ENTER, 0);
 	result = ipa3_uc_send_cmd(enable.raw32b,
 		IPA_CPU_2_HW_CMD_WDI_CH_ENABLE,
 		IPA_HW_2_CPU_WDI_CMD_STATUS_SUCCESS,
 		false, 10*HZ);
-	ipa_diag_enable_phase(seq, clnt_hdl, ep->uc_offload_state,
-		IPA_DIAG_PHASE_COMMAND_RETURN, result);
 
 	if (result) {
 		result = -EFAULT;

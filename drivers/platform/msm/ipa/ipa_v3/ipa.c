@@ -8009,6 +8009,8 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	  dev, bypass, fast);
 
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_WLAN] = (bypass != 0);
+	pr_err("IPA17 WLANSTATE source=probe bypass=%d fast=%d pool_base=0x%x pool_size=0x%x\n",
+		bypass, fast, cb->va_start, cb->va_size);
 
 	/* MAP ipa-uc ram */
 	add_map = of_get_property(dev->of_node,

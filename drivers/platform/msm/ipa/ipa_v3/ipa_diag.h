@@ -18,21 +18,10 @@ struct iommu_domain;
 #define IPA_DIAG_BUILD_LEN	64
 
 enum ipa_diag_stage {
-	IPA_DIAG_ENABLE = 0,
-	IPA_DIAG_FAULT,
-	IPA_DIAG_ALIAS,
+	IPA_DIAG_ALIAS = 0,
 	IPA_DIAG_ALIAS_STATE,
-	IPA_DIAG_WDIADDR,
-	IPA_DIAG_WLANADDR,
+	IPA_DIAG_FAULT,
 	IPA_DIAG_WLANMAP,
-};
-
-enum ipa_diag_phase {
-	IPA_DIAG_PHASE_NONE = 0,
-	IPA_DIAG_PHASE_CHECKPOINT_ENTER,
-	IPA_DIAG_PHASE_CHECKPOINT_EXIT,
-	IPA_DIAG_PHASE_COMMAND_ENTER,
-	IPA_DIAG_PHASE_COMMAND_RETURN,
 };
 
 enum ipa_diag_alias_event {
@@ -40,16 +29,6 @@ enum ipa_diag_alias_event {
 	IPA_DIAG_ALIAS_UNMAPPED = 1,
 	IPA_DIAG_ALIAS_UNMAP_FAILED = 3,
 };
-
-enum ipa_diag_wlan_flags {
-	IPA_DIAG_WLAN_PA = 0x1,		/* supplied value is a physical address */
-	IPA_DIAG_WLAN_MAPPED = 0x2,	/* a context translated it */
-};
-
-/* Context ids carried in the WLANADDR record. */
-#define IPA_DIAG_CTX_NONE	0xffu
-#define IPA_DIAG_CTX_WLAN	1u
-#define IPA_DIAG_CTX_UC		2u
 
 /* Fault classification against aliases and the WLAN setup addresses. */
 enum ipa_diag_fault_match {
@@ -110,12 +89,6 @@ struct ipa_diag_buf {
 
 extern struct ipa_diag_buf ipa_diag;
 
-u64 ipa_diag_enable_begin(u32 pipe, u32 ready);
-void ipa_diag_enable_phase(u64 seq, u32 pipe, u32 ready, int phase,
-	int command_ret);
-void ipa_diag_wdiaddr(u32 pipe, u32 object, u32 field_off, u64 submitted);
-void ipa_diag_wlanaddr(u32 pipe, u32 object, u64 supplied, u32 flags,
-	u32 context, u64 iova, u32 len);
 void ipa_diag_wlanstate(u32 enabled, u32 over_gsi);
 void ipa_diag_wlanmap(s32 pipe, u64 supplied, u32 is_pa, u64 iova,
 	u32 len, int ret, u32 phase);

@@ -1542,7 +1542,8 @@
 		ipa_smmu_wlan: ipa_smmu_wlan {
 			compatible = "qcom,ipa-smmu-wlan-cb";
 			iommus = <&anoc2_smmu 0x18e1>;
-			qcom,iommu-dma = "bypass";
+			/* WDI unmap can run in atomic context; the default power path sleeps. */
+			qcom,iommu-dma = "atomic";
 			qcom,additional-mapping =
 				<0x1E60000 0x1E60000 0x80000>;
 		};

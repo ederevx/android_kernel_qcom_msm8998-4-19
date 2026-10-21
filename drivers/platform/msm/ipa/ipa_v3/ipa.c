@@ -7950,8 +7950,10 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_WLAN);
 	int fast = 0;
 	int bypass = 0;
+	int pg_ret;
 	u32 add_map_size;
 	const u32 *add_map;
+	const char *dma_mode = "default";
 	int i;
 	u32 iova_ap_mapping[2];
 
@@ -7975,6 +7977,15 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 							"dma-coherent");
 	cb->dev   = dev;
 	cb->valid = true;
+
+	of_property_read_string(dev->of_node, "qcom,iommu-dma", &dma_mode);
+	pg_ret = ipa3_wdi_pg_init(!strcmp(dma_mode, "atomic"));
+	if (pg_ret) {
+		IPAERR("WLAN WDI page table init failed: %s\n",
+		       pg_ret == -EBUSY ? "wedge" : "alloc");
+		cb->valid = false;
+		return pg_ret;
+	}
 
 	cb->va_start = cb->va_end  = cb->va_size = 0;
 	if (of_property_read_u32_array(
@@ -8695,10 +8706,122 @@ int ipa3_register_ipa_ready_cb(void (*ipa_ready_cb)(void *), void *user_data)
 	return 0;
 }
 
+/*
+ * Bounded aliases of the live WDI uC mappings. The firmware-visible address
+ * is 0x20000000 + original low IOVA, with the same backing and permissions.
+ */
+#define IPA_UC_ALIAS_BASE	0x20000000ULL
+#define IPA_UC_ALIAS_LIMIT	0x40000000ULL
+#define IPA_UC_ALIAS_MAX		64
+
+struct ipa_uc_alias {
+	bool used;
+	struct iommu_domain *domain;
+	u64 original;
+	u64 alias;
+	u64 pa;
+	u64 len;
+	u32 prot;
+	u32 object;
+};
+
+static struct ipa_uc_alias ipa_uc_aliases[IPA_UC_ALIAS_MAX];
+static DEFINE_MUTEX(ipa_uc_alias_lock);
+
+static bool ipa_uc_alias_overlap(u64 a, u64 alen, u64 b, u64 blen)
+{
+	return a < b + blen && b < a + alen;
+}
+
+int ipa3_uc_alias_map(struct iommu_domain *domain, unsigned long original,
+	phys_addr_t pa, size_t len, int prot, u32 object)
+{
+	u64 o = (u64)original, p = (u64)pa, l = (u64)len;
+	struct ipa_uc_alias *a;
+	u64 alias;
+	int ret;
+	int i;
+
+	if (!domain || !l || (l & (PAGE_SIZE - 1)) ||
+	    (o & (PAGE_SIZE - 1)) || (p & (PAGE_SIZE - 1)))
+		return -EINVAL;
+	if (domain != ipa3_get_uc_smmu_domain())
+		return -EINVAL;
+	/* The whole original range must live below the alias base. */
+	if (o >= IPA_UC_ALIAS_BASE || l > IPA_UC_ALIAS_BASE - o)
+		return -ERANGE;
+	alias = IPA_UC_ALIAS_BASE + o;
+	if (alias < IPA_UC_ALIAS_BASE || l > IPA_UC_ALIAS_LIMIT - alias)
+		return -ERANGE;
+
+	mutex_lock(&ipa_uc_alias_lock);
+	for (i = 0; i < IPA_UC_ALIAS_MAX; i++) {
+		a = &ipa_uc_aliases[i];
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (!ipa_uc_alias_overlap(o, l, a->original, a->len))
+			continue;
+		if (o == a->original && p == a->pa && l == a->len &&
+		    prot == (int)a->prot && object == a->object) {
+			mutex_unlock(&ipa_uc_alias_lock);
+			return 0;
+		}
+		mutex_unlock(&ipa_uc_alias_lock);
+		return -EEXIST;
+	}
+
+	for (i = 0; i < IPA_UC_ALIAS_MAX; i++)
+		if (!ipa_uc_aliases[i].used)
+			break;
+	if (i == IPA_UC_ALIAS_MAX) {
+		mutex_unlock(&ipa_uc_alias_lock);
+		return -ENOSPC;
+	}
+
+	ret = ipa3_iommu_map(domain, (unsigned long)alias, pa, len, prot);
+	if (!ret) {
+		a = &ipa_uc_aliases[i];
+		a->used = true;
+		a->domain = domain;
+		a->original = o;
+		a->alias = alias;
+		a->pa = p;
+		a->len = l;
+		a->prot = (u32)prot;
+		a->object = object;
+	}
+	mutex_unlock(&ipa_uc_alias_lock);
+
+	return ret;
+}
+
+static void ipa3_uc_alias_drop(struct iommu_domain *domain,
+	unsigned long original, size_t size)
+{
+	u64 o = (u64)original, sz = (u64)size;
+	struct ipa_uc_alias *a;
+	int i;
+
+	mutex_lock(&ipa_uc_alias_lock);
+	for (i = 0; i < IPA_UC_ALIAS_MAX; i++) {
+		a = &ipa_uc_aliases[i];
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (o < a->original || o + sz > a->original + a->len)
+			continue;
+		iommu_unmap(domain, a->alias, a->len);
+		a->used = false;
+	}
+	mutex_unlock(&ipa_uc_alias_lock);
+}
+
 int ipa3_iommu_map(struct iommu_domain *domain,
 	unsigned long iova, phys_addr_t paddr, size_t size, int prot)
 {
 	struct ipa_smmu_cb_ctx *cb = NULL;
+	int ret;
 
 	IPADBG_LOW("domain =0x%pK iova 0x%lx\n", domain, iova);
 	IPADBG_LOW("paddr =0x%pa size 0x%x\n", &paddr, (u32)size);
@@ -8742,7 +8865,19 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	if (cb->is_cache_coherent)
 		prot |= IOMMU_CACHE;
 
-	return iommu_map(domain, iova, paddr, size, prot);
+	ret = iommu_map(domain, iova, paddr, size, prot);
+	return ret;
+}
+
+int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
+	size_t size)
+{
+	size_t unmapped;
+
+	unmapped = iommu_unmap(domain, iova, size);
+	if (domain == ipa3_get_uc_smmu_domain())
+		ipa3_uc_alias_drop(domain, iova, size);
+	return unmapped;
 }
 
 /**
@@ -8764,6 +8899,7 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->shared_cb = false;
+	out->identity_map = false;
 
 	switch (in->smmu_client) {
 	case IPA_SMMU_WLAN_CLIENT:
@@ -8817,6 +8953,8 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->smmu_enable = is_smmu_enable;
+	out->identity_map = in->smmu_client == IPA_SMMU_WLAN_CLIENT &&
+		is_smmu_enable && ipa3_wdi_pg_supported();
 
 	return 0;
 }

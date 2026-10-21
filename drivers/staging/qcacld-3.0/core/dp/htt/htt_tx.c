@@ -1197,6 +1197,9 @@ static void htt_tx_buf_pool_free(struct htt_pdev_t *pdev)
 	qdf_mem_info_t *mem_map_table = NULL, *mem_info = NULL;
 	uint32_t num_unmapped = 0;
 
+	if (!pdev->ipa_uc_tx_rsc.tx_buf_pool_strg)
+		return;
+
 	if (htt_ipa_uc_smmu_enabled(pdev)) {
 		mem_map_table = qdf_mem_map_table_alloc(
 					pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt);
@@ -1354,6 +1357,9 @@ static void htt_tx_buf_pool_free(struct htt_pdev_t *pdev)
 	qdf_mem_info_t *mem_map_table = NULL, *mem_info = NULL;
 	uint32_t num_unmapped = 0;
 
+	if (!pdev->ipa_uc_tx_rsc.tx_buf_pool_strg)
+		return;
+
 	if (htt_ipa_uc_smmu_enabled(pdev)) {
 		mem_map_table = qdf_mem_map_table_alloc(
 					pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt);
@@ -1440,16 +1446,23 @@ int htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
 
 	pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt = htt_tx_ipa_uc_wdi_tx_buf_alloc(
 		pdev, uc_tx_buf_sz, uc_tx_buf_cnt, uc_tx_partition_base);
-
+	if (pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt <= 0) {
+		return_code = -ENOBUFS;
+		goto free_tx_comp_base;
+	}
 
 	return 0;
 
 free_tx_comp_base:
+	qdf_mem_free(pdev->ipa_uc_tx_rsc.tx_buf_pool_strg);
+	pdev->ipa_uc_tx_rsc.tx_buf_pool_strg = NULL;
 	qdf_mem_shared_mem_free(pdev->osdev,
 				pdev->ipa_uc_tx_rsc.tx_comp_ring);
+	pdev->ipa_uc_tx_rsc.tx_comp_ring = NULL;
 free_tx_ce_idx:
 	qdf_mem_shared_mem_free(pdev->osdev,
 				pdev->ipa_uc_tx_rsc.tx_ce_idx);
+	pdev->ipa_uc_tx_rsc.tx_ce_idx = NULL;
 
 	return return_code;
 }
@@ -1465,16 +1478,20 @@ free_tx_ce_idx:
  */
 int htt_tx_ipa_uc_detach(struct htt_pdev_t *pdev)
 {
-	qdf_mem_shared_mem_free(pdev->osdev,
-				pdev->ipa_uc_tx_rsc.tx_ce_idx);
-	qdf_mem_shared_mem_free(pdev->osdev,
-				pdev->ipa_uc_tx_rsc.tx_comp_ring);
+	if (pdev->ipa_uc_tx_rsc.tx_ce_idx) {
+		qdf_mem_shared_mem_free(pdev->osdev,
+					pdev->ipa_uc_tx_rsc.tx_ce_idx);
+		pdev->ipa_uc_tx_rsc.tx_ce_idx = NULL;
+	}
+	if (pdev->ipa_uc_tx_rsc.tx_comp_ring) {
+		qdf_mem_shared_mem_free(pdev->osdev,
+					pdev->ipa_uc_tx_rsc.tx_comp_ring);
+		pdev->ipa_uc_tx_rsc.tx_comp_ring = NULL;
+	}
 
-	/* Free each single buffer */
 	htt_tx_buf_pool_free(pdev);
-
-	/* Free storage */
 	qdf_mem_free(pdev->ipa_uc_tx_rsc.tx_buf_pool_strg);
+	pdev->ipa_uc_tx_rsc.tx_buf_pool_strg = NULL;
 
 	return 0;
 }

@@ -903,7 +903,6 @@ int htt_ipa_uc_attach(struct htt_pdev_t *pdev)
 	if (error) {
 		QDF_TRACE(QDF_MODULE_ID_HTT, QDF_TRACE_LEVEL_ERROR,
 			  "HTT IPA UC TX attach fail code %d", error);
-		HTT_ASSERT0(0);
 		return error;
 	}
 

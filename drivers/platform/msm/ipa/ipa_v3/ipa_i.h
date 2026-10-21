@@ -3088,6 +3088,8 @@ struct iommu_domain *ipa3_get_smmu_domain_by_type
 	(enum ipa_smmu_cb_type cb_type);
 int ipa3_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	phys_addr_t paddr, size_t size, int prot);
+int ipa3_diag_alias_map(struct iommu_domain *domain, unsigned long original,
+	phys_addr_t pa, size_t len, int prot, u32 object);
 int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	size_t size);
 void ipa3_audit_map(const char *dom, u32 domid, unsigned long iova,

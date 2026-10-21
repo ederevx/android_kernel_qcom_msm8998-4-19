@@ -9043,6 +9043,146 @@ void ipa3_dump_fltrt_hdrs(const char *when)
 }
 EXPORT_SYMBOL(ipa3_dump_fltrt_hdrs);
 
+/*
+ * Round-17: bounded aliases of the live WDI uC mappings. The firmware-visible
+ * address is 0x20000000 + original low IOVA, same backing and permissions.
+ */
+#define IPA17_ALIAS_BASE	0x20000000ULL
+#define IPA17_ALIAS_LIMIT	0x40000000ULL
+#define IPA17_ALIAS_MAX		64
+
+struct ipa17_alias {
+	bool used;
+	struct iommu_domain *domain;
+	u64 original;
+	u64 alias;
+	u64 pa;
+	u64 len;
+	u32 prot;
+	u32 object;
+	u64 generation;
+};
+
+static struct ipa17_alias ipa17_aliases[IPA17_ALIAS_MAX];
+static DEFINE_MUTEX(ipa17_alias_lock);
+
+static bool ipa17_alias_overlap(u64 a, u64 alen, u64 b, u64 blen)
+{
+	return a < b + blen && b < a + alen;
+}
+
+int ipa3_diag_alias_map(struct iommu_domain *domain, unsigned long original,
+	phys_addr_t pa, size_t len, int prot, u32 object)
+{
+	u64 o = (u64)original, p = (u64)pa, l = (u64)len;
+	u64 alias = 0;
+	u64 gen = 0;
+	int ret = 0;
+	int i;
+
+	if (!domain || !l || (l & (PAGE_SIZE - 1)) ||
+	    (o & (PAGE_SIZE - 1)) || (p & (PAGE_SIZE - 1))) {
+		ret = -EINVAL;
+		goto report;
+	}
+	if (domain != ipa3_get_uc_smmu_domain()) {
+		ret = -EINVAL;
+		goto report;
+	}
+	/* The whole original range must live below the alias base. */
+	if (o >= IPA17_ALIAS_BASE || l > IPA17_ALIAS_BASE - o) {
+		ret = -ERANGE;
+		goto report;
+	}
+	alias = IPA17_ALIAS_BASE + o;
+	if (alias < IPA17_ALIAS_BASE || l > IPA17_ALIAS_LIMIT - alias) {
+		ret = -ERANGE;
+		goto report;
+	}
+
+	mutex_lock(&ipa17_alias_lock);
+	for (i = 0; i < IPA17_ALIAS_MAX; i++) {
+		struct ipa17_alias *a = &ipa17_aliases[i];
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (!ipa17_alias_overlap(o, l, a->original, a->len))
+			continue;
+		if (o == a->original && p == a->pa && l == a->len &&
+		    prot == (int)a->prot && object == a->object) {
+			mutex_unlock(&ipa17_alias_lock);
+			return 0;
+		}
+		mutex_unlock(&ipa17_alias_lock);
+		ret = -EEXIST;
+		goto report;
+	}
+
+	for (i = 0; i < IPA17_ALIAS_MAX; i++)
+		if (!ipa17_aliases[i].used)
+			break;
+	if (i == IPA17_ALIAS_MAX) {
+		mutex_unlock(&ipa17_alias_lock);
+		ret = -ENOSPC;
+		goto report;
+	}
+
+	ret = ipa3_iommu_map(domain, (unsigned long)alias, (phys_addr_t)p,
+		(size_t)l, prot);
+	if (!ret) {
+		struct ipa17_alias *a = &ipa17_aliases[i];
+
+		gen = ipa_diag_alias_gen_new();
+		a->used = true;
+		a->domain = domain;
+		a->original = o;
+		a->alias = alias;
+		a->pa = p;
+		a->len = l;
+		a->prot = (u32)prot;
+		a->object = object;
+		a->generation = gen;
+	}
+	mutex_unlock(&ipa17_alias_lock);
+
+report:
+	if (ret)
+		ipa_diag_mark_invalid("alias_map_failed");
+	ipa_diag_alias(object, domain, o, alias, p, l, (u32)prot, ret, gen);
+	if (!ret)
+		ipa_diag_alias_state(object, gen, IPA_DIAG_ALIAS_INSTALLED);
+	return ret;
+}
+
+static void ipa3_diag_alias_drop(struct iommu_domain *domain,
+	unsigned long original, size_t size)
+{
+	u64 o = (u64)original, sz = (u64)size;
+	int i;
+
+	mutex_lock(&ipa17_alias_lock);
+	for (i = 0; i < IPA17_ALIAS_MAX; i++) {
+		struct ipa17_alias *a = &ipa17_aliases[i];
+		int ret;
+
+		if (!a->used || a->domain != domain)
+			continue;
+		if (o < a->original || o + sz > a->original + a->len)
+			continue;
+		ret = iommu_unmap(domain, a->alias, a->len);
+		if ((u64)ret != a->len) {
+			ipa_diag_mark_invalid("alias_unmap_failed");
+			ipa_diag_alias_state(a->object, a->generation,
+				IPA_DIAG_ALIAS_UNMAP_FAILED);
+		} else {
+			ipa_diag_alias_state(a->object, a->generation,
+				IPA_DIAG_ALIAS_UNMAPPED);
+		}
+		a->used = false;
+	}
+	mutex_unlock(&ipa17_alias_lock);
+}
+
 int ipa3_iommu_map(struct iommu_domain *domain,
 	unsigned long iova, phys_addr_t paddr, size_t size, int prot)
 {
@@ -9129,6 +9269,8 @@ int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
 	}
 
 	unmapped = iommu_unmap(domain, iova, size);
+	if (domain == ipa3_get_uc_smmu_domain())
+		ipa3_diag_alias_drop(domain, iova, size);
 	ipa3_audit_unmap(dom, domid, iova, size, unmapped,
 		(unsigned long)__builtin_return_address(0));
 	return unmapped;

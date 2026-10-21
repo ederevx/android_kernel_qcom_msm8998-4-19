@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Round-14 IPA uC SMMU diagnostic ring.
+ * Round-17 IPA uC SMMU diagnostic ring.
  *
  * Records live in a static, versioned buffer recovered from the crash dump and
  * decoded against the exact vmlinux that produced the capture (symbol
- * ipa_diag); the printed checkpoints keep the literal IPA14 schemas. Round 13
- * records (ALLOC, TAG, PUB, ENABLE, FAULT, MATCH) and their fields are kept.
+ * ipa_diag); the printed checkpoints keep the literal IPA17 schemas. All r14
+ * record types are kept; round 17 adds bounded aliases of the live WDI uC
+ * mappings and per-object submitted-address records.
  */
 
 #ifndef _IPA_DIAG_H_
@@ -14,8 +15,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/types.h>
 
-#define IPA_DIAG_MAGIC		0x49504131344459ULL	/* "IPA14DY" */
-#define IPA_DIAG_VERSION	4u
+#define IPA_DIAG_MAGIC		0x49504131374459ULL	/* "IPA17DY" */
+#define IPA_DIAG_VERSION	7u
 #define IPA_DIAG_CAPACITY	2048u
 #define IPA_DIAG_BUILD_LEN	64
 /* One clone per published header slot; see ipahal_diag_tag_img(). */
@@ -40,6 +41,15 @@ enum ipa_diag_stage {
 	IPA_DIAG_MATCH,
 	IPA_DIAG_INIT,
 	IPA_DIAG_INITPUB,
+	IPA_DIAG_ALIAS,
+	IPA_DIAG_ALIAS_STATE,
+	IPA_DIAG_WDIADDR,
+};
+
+enum ipa_diag_alias_event {
+	IPA_DIAG_ALIAS_INSTALLED = 0,
+	IPA_DIAG_ALIAS_UNMAPPED = 1,
+	IPA_DIAG_ALIAS_UNMAP_FAILED = 3,
 };
 
 enum ipa_diag_kind {
@@ -149,5 +159,12 @@ bool ipa_diag_init_take(u8 *kind, u8 *ip, u8 *hash, u32 *dest);
 void ipa_diag_init_record(u8 kind, u8 ip, u8 hash, u32 image_off,
 	u32 local_off, u32 slot, u64 before, u64 after, u32 tag_id);
 void ipa_diag_initpub(u8 kind, u8 ip, u32 dst, u32 len, int ret, bool done);
+
+/* Round-17 WDI alias and submitted-address records. */
+u64 ipa_diag_alias_gen_new(void);
+void ipa_diag_alias(u32 object, struct iommu_domain *domain, u64 original,
+	u64 alias, u64 pa, u64 len, u32 prot, int ret, u64 generation);
+void ipa_diag_alias_state(u32 object, u64 generation, u32 event);
+void ipa_diag_wdiaddr(u32 pipe, u32 object, u32 field_off, u64 submitted);
 
 #endif /* _IPA_DIAG_H_ */

@@ -3766,7 +3766,7 @@ static bool ipahal_diag_init_subst(struct ipahal_fltrt_obj *obj, u8 kind,
 	t = ipahal_diag_init_clone(kind, ip, hash, slot, &tag_id);
 	if (!t) {
 		*ret = -ENOMEM;
-		pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+		pr_err("IPA17 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
 			kind, ip, slot, *ret);
 		return false;
 	}
@@ -3778,14 +3778,14 @@ static bool ipahal_diag_init_subst(struct ipahal_fltrt_obj *obj, u8 kind,
 		if (!is_sys || addr != (u64)t->dma) {
 			ipa_diag_mark_invalid("init_tag_readback");
 			*ret = -EIO;
-			pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+			pr_err("IPA17 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
 				kind, ip, slot, *ret);
 			return false;
 		}
 	} else if (after != *(u64 *)hdr) {
 		ipa_diag_mark_invalid("init_tag_readback");
 		*ret = -EIO;
-		pr_err("IPA14 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
+		pr_err("IPA17 INITFAIL kind=%u ip=%u slot=%u ret=%d\n",
 			kind, ip, slot, *ret);
 		return false;
 	}

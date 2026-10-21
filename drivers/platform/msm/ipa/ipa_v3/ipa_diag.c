@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Round-14 IPA uC SMMU diagnostic: the static record ring, the memory-only
- * enable checkpoints, init-image clone substitution, and the fault-time
- * classification against both clone registries.
+ * Round-17 IPA uC SMMU diagnostic: the static record ring, the memory-only
+ * enable checkpoints, r14 init/commit tagging, and bounded aliases of the
+ * live WDI uC mappings at 0x20000000 + original IOVA.
  */
 
 #include <linux/atomic.h>
@@ -22,7 +22,7 @@ struct ipa_diag_buf ipa_diag = {
 	.capacity = IPA_DIAG_CAPACITY,
 	.bufsize = sizeof(struct ipa_diag_rec),
 	.tags_cov = IPA_DIAG_COV_UNKNOWN,
-	.build = "r14 " UTS_RELEASE,
+	.build = "r17 " UTS_RELEASE,
 };
 
 static atomic_t ipa_diag_cursor = ATOMIC_INIT(0);
@@ -76,7 +76,7 @@ void ipa_diag_announce(void)
 	if (atomic_xchg(&ipa_diag_built, 1))
 		return;
 
-	pr_info("IPA14 BUF va=%px size=%zu capacity=%u cov=%u\n",
+	pr_info("IPA17 BUF va=%px size=%zu capacity=%u cov=%u\n",
 		(void *)&ipa_diag, sizeof(ipa_diag), IPA_DIAG_CAPACITY,
 		ipa_diag.tags_cov);
 }
@@ -97,7 +97,7 @@ void ipa_diag_mark_invalid(const char *why)
 	if (cmpxchg(&ipa_diag.invalid, 0u, 1u))
 		return;
 
-	pr_emerg("IPA14 INVALID reason=%s tags=%u\n", why,
+	pr_emerg("IPA17 INVALID reason=%s tags=%u\n", why,
 		ipahal_diag_tag_count());
 }
 
@@ -165,7 +165,7 @@ void ipa_diag_alloc(struct device *dev, struct iommu_domain *domain,
 		.a = (u32)size,
 	};
 
-	pr_info("IPA14 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
+	pr_info("IPA17 ALLOC dev=%s devp=%px domain=%px dma=%pad size=%zu cpu=%px\n",
 		dev ? dev_name(dev) : "(null)", dev, domain, &dma, size, cpu);
 
 	ipa_diag_record(&r);
@@ -232,7 +232,7 @@ void ipa_diag_pub(u64 gen, enum ipa_diag_kind kind, u8 ip, bool hashed,
 	}
 
 	if (ret || ipa_diag_is_invalid())
-		pr_err("IPA14 PUBFAIL gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u invalid=%u\n",
+		pr_err("IPA17 PUBFAIL gen=%llu kind=%s ip=%u hash=%u src=%pad dst=%#x len=%u slots=%u tagged=%u ret=%d done=%u invalid=%u\n",
 			gen, ipa_diag_kind_name(kind), ip, hashed ? 1 : 0,
 			&src, local_offset, length, slots, tagged, ret,
 			done ? 1 : 0, ipa_diag_is_invalid());
@@ -269,7 +269,7 @@ static void ipa_diag_enable_record(u64 seq, u32 pipe, u32 ready,
 	if (phase != IPA_DIAG_PHASE_CHECKPOINT_EXIT)
 		return;
 
-	pr_info("IPA14 ENABLE seq=%llu pipe=%u rt_gen=%llu flt_gen=%llu tags=%u slots=%u ready=%#x ns=%llu\n",
+	pr_info("IPA17 ENABLE seq=%llu pipe=%u rt_gen=%llu flt_gen=%llu tags=%u slots=%u ready=%#x ns=%llu\n",
 		seq, pipe, rt, flt, r.tag_alloc, r.tagged_slots, ready,
 		r.submitted_raw);
 }
@@ -339,8 +339,74 @@ void ipa_diag_initpub(u8 kind, u8 ip, u32 dst, u32 len, int ret, bool done)
 		.done = done ? 1 : 0,
 	};
 
-	pr_info("IPA14 INITPUB dst=%#x len=%u ret=%d done=%u\n",
+	pr_info("IPA17 INITPUB dst=%#x len=%u ret=%d done=%u\n",
 		dst, len, ret, done ? 1 : 0);
+	ipa_diag_record(&r);
+}
+
+/* Round-17 WDI alias generation and records. */
+static atomic64_t ipa_diag_alias_seq = ATOMIC64_INIT(0);
+
+u64 ipa_diag_alias_gen_new(void)
+{
+	return (u64)atomic64_inc_return(&ipa_diag_alias_seq);
+}
+
+void ipa_diag_alias(u32 object, struct iommu_domain *domain, u64 original,
+	u64 alias, u64 pa, u64 len, u32 prot, int ret, u64 generation)
+{
+	struct ipa_diag_rec r = {
+		.generation = generation,
+		.submitted_raw = original,
+		.image_dma = alias,
+		.clone_dma = pa,
+		.length = (u32)len,
+		.slot = prot,
+		.pipe = -1,
+		.a = object,
+		.ret = ret,
+		.stage = IPA_DIAG_ALIAS,
+		.kind = IPA_DIAG_NONE,
+	};
+
+	pr_info("IPA17 ALIAS object=%u domain=%px original=%#llx alias=%#llx pa=%#llx len=%#llx prot=%#x ret=%d generation=%llu\n",
+		object, domain, (unsigned long long)original,
+		(unsigned long long)alias, (unsigned long long)pa,
+		(unsigned long long)len, prot, ret,
+		(unsigned long long)generation);
+	ipa_diag_record(&r);
+}
+
+void ipa_diag_alias_state(u32 object, u64 generation, u32 event)
+{
+	struct ipa_diag_rec r = {
+		.generation = generation,
+		.a = object,
+		.ret = (int)event,
+		.pipe = -1,
+		.stage = IPA_DIAG_ALIAS_STATE,
+		.kind = IPA_DIAG_NONE,
+	};
+
+	pr_info("IPA17 ALIAS_STATE object=%u generation=%llu event=%u\n",
+		object, (unsigned long long)generation, event);
+	ipa_diag_record(&r);
+}
+
+void ipa_diag_wdiaddr(u32 pipe, u32 object, u32 field_off, u64 submitted)
+{
+	struct ipa_diag_rec r = {
+		.submitted_raw = submitted,
+		.image_byte_offset = field_off,
+		.slot = pipe,
+		.pipe = (s32)pipe,
+		.a = object,
+		.stage = IPA_DIAG_WDIADDR,
+		.kind = IPA_DIAG_NONE,
+	};
+
+	pr_info("IPA17 WDIADDR pipe=%u object=%u field_off=%u submitted=%#llx\n",
+		pipe, object, field_off, (unsigned long long)submitted);
 	ipa_diag_record(&r);
 }
 
@@ -377,7 +443,7 @@ void ipa_diag_match(u64 far)
 	last = max_t(u64, atomic64_read(&ipa_diag_rt_last),
 		     atomic64_read(&ipa_diag_flt_last));
 
-	pr_emerg("IPA14 MATCH far=%#llx kind=%u tag_id=%u base=%#llx size=%#llx off=%#llx last_pub_gen=%llu\n",
+	pr_emerg("IPA17 MATCH far=%#llx kind=%u tag_id=%u base=%#llx size=%#llx off=%#llx last_pub_gen=%llu\n",
 		far, kind, id, base, size, off, last);
 
 	r = (struct ipa_diag_rec) {
@@ -426,7 +492,7 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 		.b = cbfrsynra,
 	};
 
-	pr_emerg("IPA14 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
+	pr_emerg("IPA17 FAULT cb=%u sid=%#x far=%#llx fsr=%#x fsynr0=%#x ns=%llu report=%d\n",
 		cb, sid, far, fsr, fsynr0, ns, report_ret);
 
 	/* The fault and match records are the appends that survive the freeze. */
@@ -435,7 +501,7 @@ void ipa_diag_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
 	ipa_diag_match(far);
 
 	/* Whatever the handler already published stays checkable. */
-	pr_emerg("IPA14 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
+	pr_emerg("IPA17 FAULT sid_mask=%#x fsynr1=%#x cbfrsynra=%#x smr=%d tags=%u invalid=%u overflow=%u\n",
 		sid_mask, fsynr1, cbfrsynra, (int)smr_idx,
 		ipahal_diag_tag_count(), ipa_diag_is_invalid(),
 		READ_ONCE(ipa_diag.overflow));

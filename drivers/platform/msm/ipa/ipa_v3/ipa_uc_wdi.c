@@ -695,7 +695,7 @@ static int ipa_create_ap_smmu_mapping_pa(phys_addr_t pa, size_t len,
 }
 
 static int ipa_create_uc_smmu_mapping_pa(phys_addr_t pa, size_t len,
-		bool device, unsigned long *iova)
+		bool device, unsigned long *iova, u32 object)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
 	unsigned long va = roundup(cb->next_addr, PAGE_SIZE);
@@ -714,6 +714,16 @@ static int ipa_create_uc_smmu_mapping_pa(phys_addr_t pa, size_t len,
 			device ? (prot | IOMMU_MMIO) : prot);
 	if (ret) {
 		IPAERR("iommu map failed for pa=%pa len=%zu\n", &pa, true_len);
+		return -EINVAL;
+	}
+
+	ret = ipa3_diag_alias_map(cb->iommu_domain, va,
+			rounddown(pa, PAGE_SIZE), true_len,
+			device ? (prot | IOMMU_MMIO) : prot, object);
+	if (ret) {
+		IPAERR("alias map failed object=%u pa=%pa len=%zu\n",
+			object, &pa, true_len);
+		ipa3_iommu_unmap(cb->iommu_domain, va, true_len);
 		return -EINVAL;
 	}
 
@@ -779,8 +789,8 @@ static int ipa_create_ap_smmu_mapping_sgt(struct sg_table *sgt,
 			goto bad_mapping;
 		}
 		va += len;
-		ipa3_ctx->wdi_map_cnt++;
 		count++;
+		ipa3_ctx->wdi_map_cnt++;
 	}
 	cb->next_addr = va;
 	*iova = start_iova;
@@ -796,7 +806,7 @@ bad_mapping:
 
 
 static int ipa_create_uc_smmu_mapping_sgt(struct sg_table *sgt,
-		unsigned long *iova)
+		unsigned long *iova, u32 object)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_UC);
 	unsigned long va = roundup(cb->next_addr, PAGE_SIZE);
@@ -829,9 +839,16 @@ static int ipa_create_uc_smmu_mapping_sgt(struct sg_table *sgt,
 					&phys, len);
 			goto bad_mapping;
 		}
+		count++;
+		ret = ipa3_diag_alias_map(cb->iommu_domain, va, phys, len,
+			prot, object);
+		if (ret) {
+			IPAERR("alias map failed object=%u pa=%pa len=%zu\n",
+				object, &phys, len);
+			goto bad_mapping;
+		}
 		va += len;
 		ipa3_ctx->wdi_map_cnt++;
-		count++;
 	}
 	cb->next_addr = va;
 	*iova = start_iova;
@@ -839,9 +856,12 @@ static int ipa_create_uc_smmu_mapping_sgt(struct sg_table *sgt,
 	return 0;
 
 bad_mapping:
-	for_each_sg(sgt->sgl, sg, count, i)
-		ipa3_iommu_unmap(cb->iommu_domain, sg_dma_address(sg),
-				sg_dma_len(sg));
+	va = start_iova;
+	for_each_sg(sgt->sgl, sg, count, i) {
+		len = PAGE_ALIGN(sg->offset + sg->length);
+		ipa3_iommu_unmap(cb->iommu_domain, va, len);
+		va += len;
+	}
 	return -EINVAL;
 }
 
@@ -997,7 +1017,8 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 	/* no SMMU on WLAN but SMMU on IPA */
 	if (!wlan_smmu_en && !ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_UC]) {
 		if (ipa_create_uc_smmu_mapping_pa(pa, len,
-			(res_idx == IPA_WDI_CE_DB_RES) ? true : false, iova)) {
+			(res_idx == IPA_WDI_CE_DB_RES) ? true : false, iova,
+			(u32)res_idx)) {
 			IPAERR("Fail to create mapping res %d\n", res_idx);
 			return -EFAULT;
 		}
@@ -1014,7 +1035,7 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		case IPA_WDI_TX_DB_RES:
 			if (ipa_create_uc_smmu_mapping_pa(pa, len,
 				(res_idx == IPA_WDI_CE_DB_RES) ? true : false,
-				iova)) {
+				iova, (u32)res_idx)) {
 				IPAERR("Fail to create mapping res %d\n",
 						res_idx);
 				return -EFAULT;
@@ -1025,7 +1046,7 @@ int ipa_create_uc_smmu_mapping(int res_idx, bool wlan_smmu_en,
 		case IPA_WDI_RX_COMP_RING_RES:
 		case IPA_WDI_TX_RING_RES:
 		case IPA_WDI_CE_RING_RES:
-			if (ipa_create_uc_smmu_mapping_sgt(sgt, iova)) {
+			if (ipa_create_uc_smmu_mapping_sgt(sgt, iova, (u32)res_idx)) {
 				IPAERR("Fail to create mapping res %d\n",
 						res_idx);
 				WARN_ON(1);
@@ -1914,6 +1935,15 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 				in->u.dl_smmu.num_tx_buffers :
 				in->u.dl.num_tx_buffers;
 			tx_2->ipa_pipe_number = ipa_ep_idx;
+			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_TX_RING_RES, 0,
+				((u64)tx_2->comp_ring_base_pa_hi << 32) |
+				tx_2->comp_ring_base_pa);
+			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_CE_RING_RES, 12,
+				((u64)tx_2->ce_ring_base_pa_hi << 32) |
+				tx_2->ce_ring_base_pa);
+			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_CE_DB_RES, 24,
+				((u64)tx_2->ce_ring_doorbell_pa_hi << 32) |
+				tx_2->ce_ring_doorbell_pa);
 			pub.site = "wdi_tx_setup2";
 			pub.id = IPA_UC_WDI_PUB_TX2;
 			pub.opcode = IPA_CPU_2_HW_CMD_WDI_TX_SET_UP;
@@ -2133,6 +2163,20 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 					rx_2->rx_comp_ring_wp_pa_hi,
 					rx_2->rx_comp_ring_wp_pa);
 			rx_2->ipa_pipe_number = ipa_ep_idx;
+			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_RX_RING_RES, 0,
+				((u64)rx_2->rx_ring_base_pa_hi << 32) |
+				rx_2->rx_ring_base_pa);
+			ipa_diag_wdiaddr(ipa_ep_idx, IPA_WDI_RX_RING_RP_RES,
+				12, ((u64)rx_2->rx_ring_rp_pa_hi << 32) |
+				rx_2->rx_ring_rp_pa);
+			ipa_diag_wdiaddr(ipa_ep_idx,
+				IPA_WDI_RX_COMP_RING_RES, 20,
+				((u64)rx_2->rx_comp_ring_base_pa_hi << 32) |
+				rx_2->rx_comp_ring_base_pa);
+			ipa_diag_wdiaddr(ipa_ep_idx,
+				IPA_WDI_RX_COMP_RING_WP_RES, 32,
+				((u64)rx_2->rx_comp_ring_wp_pa_hi << 32) |
+				rx_2->rx_comp_ring_wp_pa);
 			pub.site = "wdi_rx_setup2";
 			pub.id = IPA_UC_WDI_PUB_RX2;
 			pub.opcode = IPA_CPU_2_HW_CMD_WDI_RX_SET_UP;

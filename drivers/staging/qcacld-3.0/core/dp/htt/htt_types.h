@@ -122,7 +122,8 @@ struct htt_ipa_uc_tx_resource_t {
 
 	uint32_t tx_comp_idx_paddr;
 	qdf_shared_mem_t **tx_buf_pool_strg;
-	uint32_t alloc_tx_buf_cnt;
+	int alloc_tx_buf_cnt;
+	uint32_t tx_retained_cnt;
 };
 
 /**
@@ -369,6 +370,7 @@ struct htt_pdev_t {
 		struct htt_rx_hash_bucket **hash_table;
 		uint32_t listnode_offset;
 		bool smmu_map;
+		bool ipa_smmu_map_failed;
 	} rx_ring;
 
 #ifndef CONFIG_HL_SUPPORT
@@ -424,6 +426,8 @@ struct htt_pdev_t {
 	struct htt_ipa_uc_tx_resource_t ipa_uc_tx_rsc;
 	struct htt_ipa_uc_rx_resource_t ipa_uc_rx_rsc;
 	int is_ipa_uc_enabled;
+	bool ipa_wdi_smmu_enabled;
+	bool ipa_wdi_smmu_identity;
 
 	struct htt_tx_credit_t htt_tx_credit;
 

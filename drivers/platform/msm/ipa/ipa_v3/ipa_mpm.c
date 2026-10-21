@@ -757,7 +757,7 @@ static void ipa_mpm_smmu_unmap(dma_addr_t carved_iova, int sz, int dir,
 			IPA_MPM_ERR("invalid PCIE SMMU domain\n");
 			ipa_assert();
 		}
-		iommu_unmap(ipa_smmu_domain, iova_p, size_p);
+		ipa3_iommu_unmap(ipa_smmu_domain, iova_p, size_p);
 
 		cb->next_addr -= size_p;
 		dma_unmap_single(ipa3_ctx->pdev, ap_cb_iova,
@@ -869,7 +869,7 @@ static void ipa_mpm_smmu_unmap_doorbell(enum mhip_smmu_domain_type smmu_domain,
 		if (smmu_domain == MHIP_SMMU_DOMAIN_IPA) {
 			ipa_smmu_domain = ipa3_get_smmu_domain();
 			if (ipa_smmu_domain) {
-				iommu_unmap(ipa_smmu_domain, iova_p, size_p);
+				ipa3_iommu_unmap(ipa_smmu_domain, iova_p, size_p);
 			} else {
 				IPA_MPM_ERR("invalid IPA smmu domain\n");
 				ipa_assert();

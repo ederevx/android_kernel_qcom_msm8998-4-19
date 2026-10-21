@@ -49,7 +49,10 @@ static atomic_t dg_hi4g = ATOMIC_INIT(0);
 static unsigned long dg_pa_max;
 static int dg_last_err;
 static unsigned int ipadiag_hb_n;
-static bool ipadiag_hb_on;
+static unsigned int ipadiag_hb_left;
+
+#define IPADIAG_HB_WINDOW	72	/* 6 min of 5 s beats after any WDI event */
+#define IPADIAG_HB_CAP		720	/* hard cap: 1 h of beats per boot */
 
 static void ipadiag_hb_fn(struct work_struct *w);
 static DECLARE_DELAYED_WORK(ipadiag_hb, ipadiag_hb_fn);
@@ -73,7 +76,7 @@ static void ipadiag_hb_fn(struct work_struct *w)
 		pr_info("IPADIAG hb n=%u sram-read\n", ipadiag_hb_n);
 		if (ipa3_ctx->uc_wdi_ctx.wdi_uc_stats_mmio &&
 		    !ipa3_get_wdi_stats(&st))
-			pr_info("IPADIAG hb n=%u txp=%u txdbf=%u txbamfull=%u rxp=%u rxrp=%u rxdb=%u rxuninit=%u\n",
+			pr_info("IPADIAG hb n=%u txp=%u txdbf=%u txbamfull=%u rxp=%u rxrp=%u rxdb=%u rxuninit=%u txcrf=%u txcre=%u txbint=%u rxirf=%u\n",
 				ipadiag_hb_n,
 				st.tx_ch_stats.num_pkts_processed,
 				st.tx_ch_stats.num_db_fired,
@@ -81,18 +84,27 @@ static void ipadiag_hb_fn(struct work_struct *w)
 				st.rx_ch_stats.num_pkts_processed,
 				st.rx_ch_stats.rx_ring_rp_value,
 				st.rx_ch_stats.num_db,
-				st.rx_ch_stats.num_pkts_in_dis_uninit_state);
+				st.rx_ch_stats.num_pkts_in_dis_uninit_state,
+				st.tx_ch_stats.tx_comp_ring_stats.ringFull,
+				st.tx_ch_stats.tx_comp_ring_stats.ringEmpty,
+				st.tx_ch_stats.num_bam_int_handled,
+				st.rx_ch_stats.rx_ind_ring_stats.ringFull);
 	}
-	if (++ipadiag_hb_n < 36)
+	ipadiag_hb_n++;
+	if (ipadiag_hb_left)
+		ipadiag_hb_left--;
+	if (ipadiag_hb_n < IPADIAG_HB_CAP &&
+	    (ipadiag_hb_left ||
+	     (txs != 0xff && (txs & IPA_WDI_ENABLED)) ||
+	     (rxs != 0xff && (rxs & IPA_WDI_ENABLED))))
 		schedule_delayed_work(&ipadiag_hb, 5 * HZ);
 }
 
 static void ipadiag_hb_kick(void)
 {
-	if (!READ_ONCE(ipadiag_hb_on)) {
-		WRITE_ONCE(ipadiag_hb_on, true);
+	WRITE_ONCE(ipadiag_hb_left, IPADIAG_HB_WINDOW);
+	if (ipadiag_hb_n < IPADIAG_HB_CAP)
 		schedule_delayed_work(&ipadiag_hb, 5 * HZ);
-	}
 }
 
 /**
@@ -2161,6 +2173,7 @@ ipa_cfg_ep_fail:
 uc_timeout:
 	pr_info("IPADIAG connect client=%d fail=%d\n", in->sys.client,
 		result);
+	ipadiag_hb_kick();
 	ipa_release_uc_smmu_mappings(in->sys.client);
 	dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base, cmd.phys_base);
 dma_alloc_fail:
@@ -2279,6 +2292,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 
 uc_timeout:
 	pr_info("IPADIAG disconnect clnt=%u ret=%d\n", clnt_hdl, result);
+	ipadiag_hb_kick();
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
 	return result;
 }
@@ -2474,6 +2488,7 @@ int ipa3_enable_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state |= IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) enabled\n", clnt_hdl);
 	pr_info("IPADIAG enable clnt=%u ret=%d\n", clnt_hdl, result);
+	ipadiag_hb_kick();
 
 uc_timeout:
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
@@ -2580,6 +2595,7 @@ int ipa3_disable_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state &= ~IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) disabled\n", clnt_hdl);
 	pr_info("IPADIAG disable clnt=%u ret=%d\n", clnt_hdl, result);
+	ipadiag_hb_kick();
 	ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain());
 
 uc_timeout:
@@ -2715,6 +2731,7 @@ int ipa3_resume_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state |= IPA_WDI_RESUMED;
 	IPADBG("client (ep: %d) resumed\n", clnt_hdl);
 	pr_info("IPADIAG resume clnt=%u ret=%d\n", clnt_hdl, result);
+	ipadiag_hb_kick();
 
 uc_timeout:
 	return result;
@@ -2949,6 +2966,7 @@ int ipa3_suspend_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state &= ~IPA_WDI_RESUMED;
 	IPADBG("client (ep: %d) suspended\n", clnt_hdl);
 	pr_info("IPADIAG suspend clnt=%u ret=%d\n", clnt_hdl, result);
+	ipadiag_hb_kick();
 
 uc_timeout:
 	return result;

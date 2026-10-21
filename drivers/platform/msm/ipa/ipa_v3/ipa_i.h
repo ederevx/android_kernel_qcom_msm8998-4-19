@@ -2804,6 +2804,8 @@ int ipa3_remove_interrupt_handler(enum ipa_irq_type interrupt);
  * Miscellaneous
  */
 int ipa3_get_ep_mapping(enum ipa_client_type client);
+void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag);
+void ipa3_diag_wlan_map(void);
 
 bool ipa3_is_ready(void);
 
@@ -3088,12 +3090,20 @@ struct iommu_domain *ipa3_get_smmu_domain_by_type
 	(enum ipa_smmu_cb_type cb_type);
 int ipa3_iommu_map(struct iommu_domain *domain, unsigned long iova,
 	phys_addr_t paddr, size_t size, int prot);
+int ipa3_diag_alias_map(struct iommu_domain *domain, unsigned long original,
+	phys_addr_t pa, size_t len, int prot, u32 object);
+int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,
+	size_t size);
 int ipa3_ap_suspend(struct device *dev);
 int ipa3_ap_resume(struct device *dev);
 int ipa3_init_interrupts(void);
 struct iommu_domain *ipa3_get_smmu_domain(void);
 int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
 int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
+bool ipa3_wdi_pg_supported(void);
+int ipa3_wdi_pg_init(bool atomic);
+int ipa3_wdi_pg_retry_failed(struct iommu_domain *domain);
+void ipa3_wdi_pg_report(const char *tag);
 int ipa3_set_flt_tuple_mask(int pipe_idx, struct ipahal_reg_hash_tuple *tuple);
 int ipa3_set_rt_tuple_mask(int tbl_idx, struct ipahal_reg_hash_tuple *tuple);
 void ipa3_set_resorce_groups_min_max_limits(void);

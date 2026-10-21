@@ -1170,6 +1170,7 @@ struct dp_soc {
 
 	qdf_atomic_t ipa_pipes_enabled;
 	bool ipa_first_tx_db_access;
+	bool ipa_wdi_smmu_enabled;
 #endif
 
 #ifdef WLAN_FEATURE_STATS_EXT

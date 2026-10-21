@@ -502,8 +502,12 @@ htt_attach(struct htt_pdev_t *pdev, int desc_pool_size)
 	int ret = 0;
 
 	pdev->is_ipa_uc_enabled = false;
-	if (ol_cfg_ipa_uc_offload_enabled(pdev->ctrl_pdev))
+	pdev->ipa_wdi_smmu_enabled = false;
+	pdev->ipa_wdi_smmu_identity = false;
+	if (ol_cfg_ipa_uc_offload_enabled(pdev->ctrl_pdev)) {
 		pdev->is_ipa_uc_enabled = true;
+		htt_ipa_uc_smmu_init(pdev);
+	}
 
 	pdev->new_htt_format_enabled = false;
 	if (ol_cfg_is_htt_new_format_enabled(pdev->ctrl_pdev))
@@ -900,7 +904,7 @@ int htt_ipa_uc_attach(struct htt_pdev_t *pdev)
 	if (error) {
 		QDF_TRACE(QDF_MODULE_ID_HTT, QDF_TRACE_LEVEL_ERROR,
 			  "HTT IPA UC TX attach fail code %d", error);
-		HTT_ASSERT0(0);
+		/* allocator/rollback failures are handled; do not panic. */
 		return error;
 	}
 

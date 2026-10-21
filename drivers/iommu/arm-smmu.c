@@ -2028,6 +2028,17 @@ int iommu_get_fault_ids(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL(iommu_get_fault_ids);
 
+#if IS_ENABLED(CONFIG_IPA)
+void ipa3_diag_smmu_fault(u32 cb, u32 sid, u32 sid_mask, u64 far, u32 fsr,
+	u32 fsynr0, u32 fsynr1, u32 cbfrsynra, int smr_idx, int report_ret);
+#else
+static void ipa3_diag_smmu_fault(u32 cb, u32 sid, u32 sid_mask, u64 far,
+	u32 fsr, u32 fsynr0, u32 fsynr1, u32 cbfrsynra, int smr_idx,
+	int report_ret)
+{
+}
+#endif
+
 static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 {
 	int flags, ret, tmp;
@@ -2133,6 +2144,8 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 		}
 		ret = IRQ_HANDLED;
 		resume = RESUME_TERMINATE;
+		ipa3_diag_smmu_fault(cfg->cbndx, frsynra, 0, iova, fsr,
+			fsynr0, fsynr1, frsynra, -1, tmp);
 		if (!non_fatal_fault) {
 			dev_err(smmu->dev,
 				"Unhandled arm-smmu context fault!\n");
@@ -3500,7 +3513,7 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
 	struct arm_smmu_device *smmu;
 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
-	int atomic_domain = smmu_domain->attributes & (1 << DOMAIN_ATTR_ATOMIC);
+	int atomic_domain = 0;
 
 	if (!fwspec || fwspec->ops != &arm_smmu_ops) {
 		dev_err(dev, "cannot attach to SMMU, is it on the same bus?\n");
@@ -3528,6 +3541,9 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	ret = arm_smmu_init_domain_context(domain, smmu, dev);
 	if (ret < 0)
 		goto out_power_off;
+
+	/* The domain attributes are only final after context init. */
+	atomic_domain = smmu_domain->attributes & (1 << DOMAIN_ATTR_ATOMIC);
 
 	/* Do not modify the SIDs, HW is still running */
 	if (is_dynamic_domain(domain)) {
@@ -4674,6 +4690,29 @@ static void arm_smmu_disable_config_clocks(struct iommu_domain *domain)
 	arm_smmu_power_off(smmu_domain->smmu->pwr);
 }
 
+static atomic_t arm_smmu_iotlb_flush_fail = ATOMIC_INIT(0);
+
+int arm_smmu_iotlb_flush_fail_count(void)
+{
+	return atomic_read(&arm_smmu_iotlb_flush_fail);
+}
+EXPORT_SYMBOL(arm_smmu_iotlb_flush_fail_count);
+
+static void arm_smmu_flush_iotlb_all(struct iommu_domain *domain)
+{
+	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+
+	if (!smmu_domain->smmu ||
+	    !(smmu_domain->attributes & (1 << DOMAIN_ATTR_ATOMIC)))
+		return;
+	if (arm_smmu_domain_power_on(domain, smmu_domain->smmu)) {
+		atomic_inc(&arm_smmu_iotlb_flush_fail);
+		return;
+	}
+	arm_smmu_tlb_inv_context_s1(smmu_domain);
+	arm_smmu_domain_power_off(domain, smmu_domain->smmu);
+}
+
 static struct iommu_ops arm_smmu_ops = {
 	.capable		= arm_smmu_capable,
 	.domain_alloc		= arm_smmu_domain_alloc,
@@ -4682,6 +4721,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.detach_dev		= arm_smmu_detach_dev,
 	.map			= arm_smmu_map,
 	.unmap			= arm_smmu_unmap,
+	.flush_iotlb_all	= arm_smmu_flush_iotlb_all,
 	.map_sg			= arm_smmu_map_sg,
 	.iova_to_phys		= arm_smmu_iova_to_phys,
 	.iova_to_phys_hard	= arm_smmu_iova_to_phys_hard,

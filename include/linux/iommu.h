@@ -391,6 +391,7 @@ extern bool iommu_is_iova_coherent(struct iommu_domain *domain,
 				dma_addr_t iova);
 extern void iommu_set_fault_handler(struct iommu_domain *domain,
 			iommu_fault_handler_t handler, void *token);
+extern int arm_smmu_iotlb_flush_fail_count(void);
 extern int iommu_get_fault_ids(struct iommu_domain *domain,
 				struct iommu_fault_ids *f_ids);
 extern void iommu_get_resv_regions(struct device *dev, struct list_head *list);

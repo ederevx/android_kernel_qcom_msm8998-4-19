@@ -342,7 +342,7 @@ static int ipa3_smmu_map_uc_ntn_pipes(struct ipa_ntn_setup_info *params,
 			if (result)
 				IPAERR("Fail to map 0x%llx\n", iova);
 		} else {
-			result = iommu_unmap(smmu_domain, iova_p, size_p);
+			result = ipa3_iommu_unmap(smmu_domain, iova_p, size_p);
 			if (result != params->data_buff_size)
 				IPAERR("Fail to unmap 0x%llx\n", iova);
 		}

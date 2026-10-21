@@ -730,7 +730,7 @@ static void imp_mhi_shutdown(void)
 				imp_ctx->dev_info.chdb_base, PAGE_SIZE,
 				&iova_p, &pa_p, &size_p);
 
-			iommu_unmap(cb->iommu_domain, iova_p, size_p);
+			ipa3_iommu_unmap(cb->iommu_domain, iova_p, size_p);
 		}
 	}
 	if (!imp_ctx->in_lpm &&

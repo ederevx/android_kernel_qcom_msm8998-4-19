@@ -22,6 +22,7 @@
 #include <athdefs.h>            /* A_STATUS */
 #include <qdf_nbuf.h>           /* qdf_nbuf_t */
 #include <qdf_util.h>           /* qdf_assert */
+#include <qdf_ipa.h>            /* qdf_get_ipa_smmu_enabled */
 #include <htc_api.h>            /* HTC_PACKET */
 
 #include <htt_types.h>
@@ -631,6 +632,24 @@ htt_rx_hash_list_insert(struct htt_pdev_t *pdev,
 
 qdf_nbuf_t
 htt_rx_hash_list_lookup(struct htt_pdev_t *pdev, qdf_dma_addr_t paddr);
+
+static inline bool htt_ipa_uc_smmu_enabled(struct htt_pdev_t *pdev)
+{
+	return pdev->ipa_wdi_smmu_enabled;
+}
+
+static inline void htt_ipa_uc_smmu_init(struct htt_pdev_t *pdev)
+{
+#if defined(IPA_OFFLOAD) && defined(ENABLE_SMMU_S1_TRANSLATION)
+	pdev->ipa_wdi_smmu_enabled =
+		pdev->is_ipa_uc_enabled && qdf_get_ipa_smmu_enabled();
+	pdev->ipa_wdi_smmu_identity =
+		pdev->ipa_wdi_smmu_enabled && qdf_get_ipa_wdi_identity_map();
+#else
+	pdev->ipa_wdi_smmu_enabled = false;
+	pdev->ipa_wdi_smmu_identity = false;
+#endif
+}
 
 #ifdef IPA_OFFLOAD
 int

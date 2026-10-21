@@ -4195,6 +4195,52 @@ int ipa3_init_hw(void)
 	return 0;
 }
 
+void ipa3_diag_wlan_map(void)
+{
+	u8 hw_idx = ipa3_get_hw_type_index();
+	const struct ipa_ep_configuration *m = ipa3_ep_mapping[hw_idx];
+
+	pr_err("IPA17 WLANMAP hw=%u W1P=%d/%d W1C=%d/%d AMPDU=%d/%d W2C=%d/%d W3C=%d/%d W4C=%d/%d\n",
+		hw_idx,
+		m[IPA_CLIENT_WLAN1_PROD].valid,
+		m[IPA_CLIENT_WLAN1_PROD].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN1_CONS].valid,
+		m[IPA_CLIENT_WLAN1_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_A5_WLAN_AMPDU_PROD].valid,
+		m[IPA_CLIENT_A5_WLAN_AMPDU_PROD].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN2_CONS].valid,
+		m[IPA_CLIENT_WLAN2_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN3_CONS].valid,
+		m[IPA_CLIENT_WLAN3_CONS].ipa_gsi_ep_info.ipa_ep_num,
+		m[IPA_CLIENT_WLAN4_CONS].valid,
+		m[IPA_CLIENT_WLAN4_CONS].ipa_gsi_ep_info.ipa_ep_num);
+}
+
+void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag)
+{
+	u8 hw_idx = ipa3_get_hw_type_index();
+	int used = 0, valid = 0, held = 0, i, c;
+	const struct ipa_ep_configuration *m;
+
+	for (i = 0; i < ipa3_ctx->ipa_num_pipes; i++) {
+		if (ipa3_ctx->ep[i].valid) {
+			used++;
+			if (ipa3_ctx->ep[i].client == client)
+				held++;
+		}
+	}
+	for (c = 0; c < IPA_CLIENT_MAX; c++)
+		if (ipa3_ep_mapping[hw_idx][c].valid)
+			valid++;
+	m = (client >= 0 && client < IPA_CLIENT_MAX) ?
+		&ipa3_ep_mapping[hw_idx][client] : NULL;
+
+	pr_err("IPA17 EPMAP tag=%s req_type=%d req_count=1 held=%d free=%d used=%d hw=%u mapvalid=%d epnum=%d map_total=%d\n",
+		tag, (int)client, held, ipa3_ctx->ipa_num_pipes - used,
+		used, hw_idx, m ? m->valid : 0,
+		m ? m->ipa_gsi_ep_info.ipa_ep_num : -1, valid);
+}
+
 /**
  * ipa3_get_ep_mapping() - provide endpoint mapping
  * @client: client type

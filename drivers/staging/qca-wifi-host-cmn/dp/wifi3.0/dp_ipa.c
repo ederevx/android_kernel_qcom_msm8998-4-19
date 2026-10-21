@@ -123,7 +123,7 @@ QDF_STATUS dp_ipa_handle_rx_buf_smmu_mapping(struct dp_soc *soc,
 	}
 
 	if (!wlan_cfg_is_ipa_enabled(soc->wlan_cfg_ctx) ||
-	    !qdf_mem_smmu_s1_enabled(soc->osdev))
+	    !soc->ipa_wdi_smmu_enabled)
 		return QDF_STATUS_SUCCESS;
 
 	if (!qdf_atomic_read(&soc->ipa_pipes_enabled))
@@ -145,7 +145,7 @@ static QDF_STATUS dp_ipa_handle_rx_buf_pool_smmu_mapping(struct dp_soc *soc,
 	struct dp_rx_desc *rx_desc;
 	qdf_nbuf_t nbuf;
 
-	if (!qdf_mem_smmu_s1_enabled(soc->osdev))
+	if (!soc->ipa_wdi_smmu_enabled)
 		return QDF_STATUS_SUCCESS;
 
 	pdev_id = pdev->pdev_id;
@@ -181,7 +181,7 @@ static QDF_STATUS dp_ipa_handle_rx_buf_pool_smmu_mapping(struct dp_soc *soc,
 	qdf_nbuf_t nbuf;
 	int i;
 
-	if (!qdf_mem_smmu_s1_enabled(soc->osdev))
+	if (!soc->ipa_wdi_smmu_enabled)
 		return QDF_STATUS_SUCCESS;
 
 	pdev_id = pdev->pdev_id;
@@ -1141,12 +1141,14 @@ QDF_STATUS dp_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 	qdf_ipa_wdi_conn_out_params_t pipe_out;
 	int ret;
 
+	soc->ipa_wdi_smmu_enabled = false;
 	if (!wlan_cfg_is_ipa_enabled(soc->wlan_cfg_ctx))
 		return QDF_STATUS_SUCCESS;
 
 	qdf_mem_zero(&pipe_in, sizeof(pipe_in));
 	qdf_mem_zero(&pipe_out, sizeof(pipe_out));
 
+	soc->ipa_wdi_smmu_enabled = is_smmu_enabled;
 	if (is_smmu_enabled)
 		QDF_IPA_WDI_CONN_IN_PARAMS_SMMU_ENABLED(&pipe_in) = true;
 	else
@@ -1222,6 +1224,7 @@ QDF_STATUS dp_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 			  "%s: ipa_wdi_conn_pipes: IPA pipe setup failed: ret=%d",
 			  __func__, ret);
+		soc->ipa_wdi_smmu_enabled = false;
 		return QDF_STATUS_E_FAILURE;
 	}
 
@@ -1673,6 +1676,7 @@ QDF_STATUS dp_ipa_disable_pipes(struct cdp_pdev *ppdev)
 
 	qdf_atomic_set(&soc->ipa_pipes_enabled, 0);
 	dp_ipa_handle_rx_buf_pool_smmu_mapping(soc, pdev, false);
+	soc->ipa_wdi_smmu_enabled = false;
 
 	return result ? QDF_STATUS_E_FAILURE : QDF_STATUS_SUCCESS;
 }

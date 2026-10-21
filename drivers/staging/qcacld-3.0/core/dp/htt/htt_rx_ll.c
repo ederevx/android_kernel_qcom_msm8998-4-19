@@ -366,6 +366,20 @@ static void htt_rx_ring_buff_free(struct htt_pdev_t *pdev, qdf_nbuf_t netbuf)
 		qdf_nbuf_free(netbuf);
 }
 
+/*
+ * Unmap one RX buffer. An identity-mapping IPA page may still be unmapping,
+ * so retry once there; other platforms keep the single unmap.
+ */
+static int htt_rx_ipa_smmu_unmap(struct htt_pdev_t *pdev, qdf_mem_info_t *m)
+{
+	int ret = cds_smmu_map_unmap(false, 1, m);
+
+	if (!pdev->ipa_wdi_smmu_identity)
+		return 0;
+
+	return ret ? cds_smmu_map_unmap(false, 1, m) : 0;
+}
+
 /* full_reorder_offload case: this function is called with lock held */
 static int htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
 {
@@ -374,14 +388,21 @@ static int htt_rx_ring_fill_n(struct htt_pdev_t *pdev, int num)
 	struct htt_host_rx_desc_base *rx_desc;
 	int filled = 0;
 	int debt_served = 0;
+	int smmu_ret;
 	qdf_mem_info_t mem_map_table = {0};
 	bool ipa_smmu = false;
+	bool identity_map = false;
 
 	idx = *pdev->rx_ring.alloc_idx.vaddr;
 
 	if (htt_ipa_uc_smmu_enabled(pdev) &&
-	    pdev->rx_ring.smmu_map)
+	    pdev->rx_ring.smmu_map) {
+		if (pdev->rx_ring.ipa_smmu_map_failed) {
+			goto update_alloc_idx;
+		}
 		ipa_smmu = true;
+		identity_map = pdev->ipa_wdi_smmu_identity;
+	}
 
 	if ((idx < 0) || (idx > pdev->rx_ring.size_mask) ||
 	    (num > pdev->rx_ring.size))  {
@@ -454,12 +475,37 @@ moretofill:
 
 		paddr = qdf_nbuf_get_frag_paddr(rx_netbuf, 0);
 		paddr_marked = htt_rx_paddr_mark_high_bits(paddr);
+
+		if (identity_map) {
+			qdf_update_mem_map_table(pdev->osdev, &mem_map_table,
+						 paddr, HTT_RX_BUF_SIZE);
+			smmu_ret = cds_smmu_map_unmap(true, 1,
+						      &mem_map_table);
+			if (smmu_ret) {
+				if (smmu_ret == -EUCLEAN) {
+					goto update_alloc_idx;
+				}
+#ifdef DEBUG_DMA_DONE
+				qdf_nbuf_unmap(pdev->osdev, rx_netbuf,
+					       QDF_DMA_BIDIRECTIONAL);
+#else
+				qdf_nbuf_unmap(pdev->osdev, rx_netbuf,
+					       QDF_DMA_FROM_DEVICE);
+#endif
+				htt_rx_ring_buff_free(pdev, rx_netbuf);
+				goto update_alloc_idx;
+			}
+		}
+
 		if (pdev->cfg.is_full_reorder_offload) {
 			if (qdf_unlikely(htt_rx_hash_list_insert(
 					pdev, paddr_marked, rx_netbuf))) {
 				QDF_TRACE(QDF_MODULE_ID_HTT,
 					  QDF_TRACE_LEVEL_ERROR,
 					  "%s: hash insert failed!", __func__);
+				if (identity_map &&
+				    htt_rx_ipa_smmu_unmap(pdev, &mem_map_table))
+					goto update_alloc_idx;
 #ifdef DEBUG_DMA_DONE
 				qdf_nbuf_unmap(pdev->osdev, rx_netbuf,
 					       QDF_DMA_BIDIRECTIONAL);
@@ -476,7 +522,7 @@ moretofill:
 			pdev->rx_ring.buf.netbufs_ring[idx] = rx_netbuf;
 		}
 
-		if (ipa_smmu) {
+		if (ipa_smmu && !identity_map) {
 			qdf_update_mem_map_table(pdev->osdev, &mem_map_table,
 						 paddr, HTT_RX_BUF_SIZE);
 			cds_smmu_map_unmap(true, 1, &mem_map_table);
@@ -1328,24 +1374,32 @@ static void htt_rx_hash_deinit(struct htt_pdev_t *pdev)
 							     pdev->rx_ring.
 							     listnode_offset);
 			if (hash_entry->netbuf) {
+				bool retain = false;
+
 				if (ipa_smmu) {
 					qdf_update_mem_map_table(pdev->osdev,
 						&mem_map_table,
-						QDF_NBUF_CB_PADDR(
-							hash_entry->netbuf),
+						QDF_NBUF_CB_PADDR(hash_entry->netbuf),
 						HTT_RX_BUF_SIZE);
 
-					cds_smmu_map_unmap(false, 1,
-							   &mem_map_table);
+					if (htt_rx_ipa_smmu_unmap(pdev,
+								  &mem_map_table))
+						retain = true;
 				}
+				if (retain) {
+					hash_entry->netbuf = NULL;
+				} else {
 #ifdef DEBUG_DMA_DONE
-				qdf_nbuf_unmap(pdev->osdev, hash_entry->netbuf,
-					       QDF_DMA_BIDIRECTIONAL);
+					qdf_nbuf_unmap(pdev->osdev,
+						       hash_entry->netbuf,
+						       QDF_DMA_BIDIRECTIONAL);
 #else
-				qdf_nbuf_unmap(pdev->osdev, hash_entry->netbuf,
-					       QDF_DMA_FROM_DEVICE);
+					qdf_nbuf_unmap(pdev->osdev,
+						       hash_entry->netbuf,
+						       QDF_DMA_FROM_DEVICE);
 #endif
-				qdf_nbuf_free(hash_entry->netbuf);
+					qdf_nbuf_free(hash_entry->netbuf);
+				}
 				hash_entry->paddr = 0;
 			}
 			list_iter = list_iter->next;
@@ -1464,7 +1518,10 @@ htt_rx_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 			qdf_update_mem_map_table(pdev->osdev, &mem_map_table,
 						 QDF_NBUF_CB_PADDR(msdu),
 						 HTT_RX_BUF_SIZE);
-			cds_smmu_map_unmap(false, 1, &mem_map_table);
+			if (htt_rx_ipa_smmu_unmap(pdev, &mem_map_table)) {
+				*head_msdu = *tail_msdu = NULL;
+				return 0;
+			}
 		}
 
 		/*
@@ -2200,6 +2257,8 @@ void htt_rx_detach(struct htt_pdev_t *pdev)
 		qdf_mem_info_t mem_map_table = {0};
 
 		while (sw_rd_idx != *pdev->rx_ring.alloc_idx.vaddr) {
+			bool retain = false;
+
 			if (ipa_smmu) {
 				qdf_update_mem_map_table(pdev->osdev,
 					&mem_map_table,
@@ -2207,22 +2266,24 @@ void htt_rx_detach(struct htt_pdev_t *pdev)
 						pdev->rx_ring.buf.
 						netbufs_ring[sw_rd_idx]),
 					HTT_RX_BUF_SIZE);
-				cds_smmu_map_unmap(false, 1,
-						   &mem_map_table);
+				if (htt_rx_ipa_smmu_unmap(pdev, &mem_map_table))
+					retain = true;
 			}
+			if (!retain) {
 #ifdef DEBUG_DMA_DONE
-			qdf_nbuf_unmap(pdev->osdev,
-				       pdev->rx_ring.buf.
-				       netbufs_ring[sw_rd_idx],
-				       QDF_DMA_BIDIRECTIONAL);
+				qdf_nbuf_unmap(pdev->osdev,
+					       pdev->rx_ring.buf.
+					       netbufs_ring[sw_rd_idx],
+					       QDF_DMA_BIDIRECTIONAL);
 #else
-			qdf_nbuf_unmap(pdev->osdev,
-				       pdev->rx_ring.buf.
-				       netbufs_ring[sw_rd_idx],
-				       QDF_DMA_FROM_DEVICE);
+				qdf_nbuf_unmap(pdev->osdev,
+					       pdev->rx_ring.buf.
+					       netbufs_ring[sw_rd_idx],
+					       QDF_DMA_FROM_DEVICE);
 #endif
-			qdf_nbuf_free(pdev->rx_ring.buf.
-				      netbufs_ring[sw_rd_idx]);
+				qdf_nbuf_free(pdev->rx_ring.buf.
+					      netbufs_ring[sw_rd_idx]);
+			}
 			sw_rd_idx++;
 			sw_rd_idx &= pdev->rx_ring.size_mask;
 		}
@@ -2250,7 +2311,8 @@ void htt_rx_detach(struct htt_pdev_t *pdev)
 	qdf_spinlock_destroy(&pdev->rx_ring.refill_lock);
 }
 
-static QDF_STATUS htt_rx_hash_smmu_map(bool map, struct htt_pdev_t *pdev)
+static QDF_STATUS __htt_rx_hash_smmu_map(bool map, struct htt_pdev_t *pdev,
+					 uint32_t limit, uint32_t *done)
 {
 	uint32_t i;
 	struct htt_rx_hash_entry *hash_entry;
@@ -2259,11 +2321,9 @@ static QDF_STATUS htt_rx_hash_smmu_map(bool map, struct htt_pdev_t *pdev)
 	qdf_mem_info_t mem_map_table = {0};
 	int ret;
 
-	qdf_spin_lock_bh(&pdev->rx_ring.rx_hash_lock);
 	hash_table = pdev->rx_ring.hash_table;
 
 	for (i = 0; i < RX_NUM_HASH_BUCKETS; i++) {
-		/* Free the hash entries in hash bucket i */
 		list_iter = hash_table[i]->listhead.next;
 		while (list_iter != &hash_table[i]->listhead) {
 			hash_entry =
@@ -2271,26 +2331,38 @@ static QDF_STATUS htt_rx_hash_smmu_map(bool map, struct htt_pdev_t *pdev)
 							     pdev->rx_ring.
 							     listnode_offset);
 			if (hash_entry->netbuf) {
+				if (limit && *done >= limit)
+					return QDF_STATUS_SUCCESS;
 				qdf_update_mem_map_table(pdev->osdev,
 						&mem_map_table,
-						QDF_NBUF_CB_PADDR(
-							hash_entry->netbuf),
+						QDF_NBUF_CB_PADDR(hash_entry->netbuf),
 						HTT_RX_BUF_SIZE);
 				ret = cds_smmu_map_unmap(map, 1,
 							 &mem_map_table);
-				if (ret) {
-					qdf_spin_unlock_bh(
-						&pdev->rx_ring.rx_hash_lock);
+				if (ret)
 					return QDF_STATUS_E_FAILURE;
-				}
+				(*done)++;
 			}
 			list_iter = list_iter->next;
 		}
 	}
 
+	return QDF_STATUS_SUCCESS;
+}
+
+static QDF_STATUS htt_rx_hash_smmu_map(bool map, struct htt_pdev_t *pdev)
+{
+	QDF_STATUS status;
+	uint32_t done = 0, rolled = 0;
+
+	qdf_spin_lock_bh(&pdev->rx_ring.rx_hash_lock);
+	status = __htt_rx_hash_smmu_map(map, pdev, 0, &done);
+	if (status != QDF_STATUS_SUCCESS && map && done &&
+	    pdev->ipa_wdi_smmu_identity)
+		__htt_rx_hash_smmu_map(false, pdev, done, &rolled);
 	qdf_spin_unlock_bh(&pdev->rx_ring.rx_hash_lock);
 
-	return QDF_STATUS_SUCCESS;
+	return status;
 }
 
 QDF_STATUS htt_rx_update_smmu_map(struct htt_pdev_t *pdev, bool map)
@@ -2306,6 +2378,13 @@ QDF_STATUS htt_rx_update_smmu_map(struct htt_pdev_t *pdev, bool map)
 	qdf_spin_lock_bh(&pdev->rx_ring.refill_lock);
 	pdev->rx_ring.smmu_map = map;
 	status = htt_rx_hash_smmu_map(map, pdev);
+	if (map && status != QDF_STATUS_SUCCESS &&
+	    pdev->ipa_wdi_smmu_identity) {
+		pdev->rx_ring.ipa_smmu_map_failed = true;
+		pdev->rx_ring.smmu_map = true;
+	} else if (map) {
+		pdev->rx_ring.ipa_smmu_map_failed = false;
+	}
 	qdf_spin_unlock_bh(&pdev->rx_ring.refill_lock);
 
 	return status;

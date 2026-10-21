@@ -7953,6 +7953,7 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	int bypass = 0;
 	u32 add_map_size;
 	const u32 *add_map;
+	const char *dma_mode = "default";
 	int i;
 	u32 iova_ap_mapping[2];
 
@@ -7976,6 +7977,18 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 							"dma-coherent");
 	cb->dev   = dev;
 	cb->valid = true;
+
+	of_property_read_string(dev->of_node, "qcom,iommu-dma", &dma_mode);
+	{
+		int pg_ret = ipa3_wdi_pg_init(!strcmp(dma_mode, "atomic"));
+
+		if (pg_ret) {
+			IPAERR("WLAN WDI page table init failed: %s\n",
+			       pg_ret == -EBUSY ? "wedge" : "alloc");
+			cb->valid = false;
+			return pg_ret;
+		}
+	}
 
 	cb->va_start = cb->va_end  = cb->va_size = 0;
 	if (of_property_read_u32_array(
@@ -8009,8 +8022,8 @@ static int ipa_smmu_wlan_cb_probe(struct device *dev)
 	  dev, bypass, fast);
 
 	ipa3_ctx->s1_bypass_arr[IPA_SMMU_CB_WLAN] = (bypass != 0);
-	pr_err("IPA17 WLANSTATE source=probe bypass=%d fast=%d pool_base=0x%x pool_size=0x%x\n",
-		bypass, fast, cb->va_start, cb->va_size);
+	pr_err("IPA17 WLANSTATE source=probe bypass=%d fast=%d dma=%s pool_base=0x%x pool_size=0x%x\n",
+		bypass, fast, dma_mode, cb->va_start, cb->va_size);
 
 	/* MAP ipa-uc ram */
 	add_map = of_get_property(dev->of_node,
@@ -8920,6 +8933,7 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->shared_cb = false;
+	out->identity_map = false;
 
 	switch (in->smmu_client) {
 	case IPA_SMMU_WLAN_CLIENT:
@@ -8973,6 +8987,8 @@ int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	}
 
 	out->smmu_enable = is_smmu_enable;
+	out->identity_map = in->smmu_client == IPA_SMMU_WLAN_CLIENT &&
+		is_smmu_enable && ipa3_wdi_pg_supported();
 
 	if (in->smmu_client == IPA_SMMU_WLAN_CLIENT)
 		ipa_diag_wlanstate(is_smmu_enable,

@@ -647,6 +647,16 @@ static inline bool qdf_get_ipa_smmu_enabled(void)
 {
 	return __qdf_get_ipa_smmu_enabled();
 }
+
+/**
+ * qdf_get_ipa_wdi_identity_map() - to get the WLAN mapping mode
+ *
+ * Return: true when IPA maps WLAN buffers at their physical address
+ */
+static inline bool qdf_get_ipa_wdi_identity_map(void)
+{
+	return __qdf_get_ipa_wdi_identity_map();
+}
 #endif
 
 #endif /* IPA_OFFLOAD */

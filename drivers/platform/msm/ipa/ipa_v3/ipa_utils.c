@@ -4204,22 +4204,26 @@ int ipa3_init_hw(void)
 void ipa3_diag_ep_map(enum ipa_client_type client, const char *tag)
 {
 	u8 hw_idx = ipa3_get_hw_type_index();
-	int used = 0, valid = 0, i, c;
+	int used = 0, valid = 0, held = 0, i, c;
 	const struct ipa_ep_configuration *m;
 
-	for (i = 0; i < ipa3_ctx->ipa_num_pipes; i++)
-		if (ipa3_ctx->ep[i].valid)
+	for (i = 0; i < ipa3_ctx->ipa_num_pipes; i++) {
+		if (ipa3_ctx->ep[i].valid) {
 			used++;
+			if (ipa3_ctx->ep[i].client == client)
+				held++;
+		}
+	}
 	for (c = 0; c < IPA_CLIENT_MAX; c++)
 		if (ipa3_ep_mapping[hw_idx][c].valid)
 			valid++;
 	m = (client >= 0 && client < IPA_CLIENT_MAX) ?
 		&ipa3_ep_mapping[hw_idx][client] : NULL;
 
-	pr_err("IPA17 EPMAP tag=%s client=%d hw=%u mapvalid=%d epnum=%d map_total=%d used=%d free=%d\n",
-		tag, (int)client, hw_idx, m ? m->valid : 0,
-		m ? m->ipa_gsi_ep_info.ipa_ep_num : -1, valid, used,
-		ipa3_ctx->ipa_num_pipes - used);
+	pr_err("IPA17 EPMAP tag=%s req_type=%d req_count=1 held=%d free=%d used=%d hw=%u mapvalid=%d epnum=%d map_total=%d\n",
+		tag, (int)client, held, ipa3_ctx->ipa_num_pipes - used,
+		used, hw_idx, m ? m->valid : 0,
+		m ? m->ipa_gsi_ep_info.ipa_ep_num : -1, valid);
 }
 
 int ipa3_get_ep_mapping(enum ipa_client_type client)

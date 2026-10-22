@@ -656,7 +656,7 @@ ol_rx_indication_handler(ol_txrx_pdev_handle pdev,
 				}
 
 				if (!head_msdu)
-					continue;
+					goto reorder_done;
 
 				/* Pktlog */
 				ol_rx_send_pktlog_event(pdev, peer,
@@ -708,7 +708,7 @@ ol_rx_indication_handler(ol_txrx_pdev_handle pdev,
 					htt_rx_mpdu_desc_list_next(htt_pdev,
 								   rx_ind_msg);
 				if (!msdu)
-					continue;
+					goto reorder_done;
 				OL_RX_ERR_STATISTICS_2(pdev, vdev, peer,
 						       rx_mpdu_desc, msdu,
 						       status);
@@ -765,6 +765,7 @@ ol_rx_indication_handler(ol_txrx_pdev_handle pdev,
 			}
 		}
 	}
+reorder_done:
 	/*
 	 * Now that a whole batch of MSDUs have been pulled out of HTT
 	 * and put into the rx reorder array, it is an appropriate time

@@ -2352,6 +2352,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 {
 	struct ipa3_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t tear;
+	enum ipa_client_type client;
 	int result;
 
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
@@ -2365,6 +2366,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 
 	IPADBG("ep=%d\n", clnt_hdl);
 	ep = &ipa3_ctx->ep[clnt_hdl];
+	client = ep->client;
 
 	if (!(ep->uc_offload_state & IPA_WDI_TORN_DOWN)) {
 		result = ipa3_uc_state_check();
@@ -2379,7 +2381,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 		}
 	}
 
-	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
+	IPA_ACTIVE_CLIENTS_INC_EP(client);
 
 	if (ep->uc_offload_state & IPA_WDI_TORN_DOWN)
 		goto release;
@@ -2400,14 +2402,14 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state |= IPA_WDI_TORN_DOWN;
 
 release:
-	result = ipa_release_uc_smmu_mappings(ipa3_get_client_mapping(clnt_hdl));
+	result = ipa_release_uc_smmu_mappings(client);
 	if (result) {
 		IPAERR("uC mapping release incomplete: %d\n", result);
 		goto uc_timeout;
 	}
 
 	if (ep->keep_ipa_awake)
-		IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
+		IPA_ACTIVE_CLIENTS_DEC_EP(client);
 
 	memset(&ipa3_ctx->ep[clnt_hdl], 0, sizeof(struct ipa3_ep_context));
 	IPADBG("client (ep: %d) disconnected\n", clnt_hdl);
@@ -2419,7 +2421,7 @@ release:
 		IPADBG("uc_wdi_ctx.stats_notify already null\n");
 
 uc_timeout:
-	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
+	IPA_ACTIVE_CLIENTS_DEC_EP(client);
 	return result;
 }
 

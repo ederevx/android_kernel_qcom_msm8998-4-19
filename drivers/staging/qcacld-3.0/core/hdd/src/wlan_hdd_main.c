@@ -3475,8 +3475,6 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 	qdf_device_t qdf_dev;
 	QDF_STATUS status;
 	bool unint = false;
-	bool sysfs_created = false;
-	bool notifiers_registered = false;
 	void *hif_ctx;
 	struct target_psoc_info *tgt_hdl;
 
@@ -3631,8 +3629,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 
 		ret = hdd_register_notifiers(hdd_ctx);
 		if (ret)
-			goto cds_txrx_free;
-		notifiers_registered = true;
+			goto deregister_cb;
 
 		/*
 		 * NAN compoenet requires certian operations like, open adapter,
@@ -3645,7 +3642,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 		if (!QDF_IS_STATUS_SUCCESS(status)) {
 			hdd_err("Failed to pre-enable CDS; status: %d", status);
 			ret = qdf_status_to_os_return(status);
-			goto cds_txrx_free;
+			goto unregister_notifiers;
 		}
 
 		hdd_register_policy_manager_callback(
@@ -3654,7 +3651,6 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 		hdd_spectral_register_to_dbr(hdd_ctx);
 
 		hdd_create_sysfs_files(hdd_ctx);
-		sysfs_created = true;
 		hdd_update_hw_sw_info(hdd_ctx);
 
 		if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
@@ -3667,7 +3663,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 		ret = hdd_configure_cds(hdd_ctx);
 		if (ret) {
 			hdd_err("Failed to Enable cds modules; errno: %d", ret);
-			goto cds_txrx_free;
+			goto destroy_driver_sysfs;
 		}
 
 		hdd_enable_power_management(hdd_ctx);
@@ -3692,12 +3688,13 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 
 	return 0;
 
-cds_txrx_free:
+destroy_driver_sysfs:
 	/*
-	 * Every failure after a successful cds_dp_open() quiesces and
-	 * pre-detaches the datapath before any owner or context is freed.
-	 * Retained mapping ownership must not be destroyed.
+	 * A failure after cds_pre_enable() attached the datapath quiesces and
+	 * pre-detaches it before any owner or context is freed; retained
+	 * mapping ownership must not be destroyed.
 	 */
+	hdd_destroy_sysfs_files();
 	status = cds_post_disable();
 	if (QDF_IS_STATUS_ERROR(status)) {
 		hdd_err("Failed to process post CDS disable! :%d", status);
@@ -3712,11 +3709,13 @@ cds_txrx_free:
 		      status);
 	}
 
-	if (sysfs_created)
-		hdd_destroy_sysfs_files();
-	if (notifiers_registered)
-		hdd_unregister_notifiers(hdd_ctx);
+unregister_notifiers:
+	hdd_unregister_notifiers(hdd_ctx);
+
+deregister_cb:
 	hdd_deregister_cb(hdd_ctx);
+
+cds_txrx_free:
 
 	tgt_hdl = wlan_psoc_get_tgt_if_handle(hdd_ctx->psoc);
 

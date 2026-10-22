@@ -913,6 +913,7 @@ struct ipa3_status_stats {
  * @skip_ep_cfg: boolean field that determines if EP should be configured
  *  by IPA driver
  * @keep_ipa_awake: when true, IPA will not be clock gated
+ * @active_vote: this endpoint holds an IPA active-client vote
  * @disconnect_in_progress: Indicates client disconnect in progress.
  * @qmi_request_sent: Indicates whether QMI request to enable clear data path
  *					request is sent or not.
@@ -941,6 +942,7 @@ struct ipa3_ep_context {
 	u32 dflt_flt6_rule_hdl;
 	bool skip_ep_cfg;
 	bool keep_ipa_awake;
+	bool active_vote;
 	struct ipa3_wlan_stats wstats;
 	u32 uc_offload_state;
 	u32 gsi_offload_state;

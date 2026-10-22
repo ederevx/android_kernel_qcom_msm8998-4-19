@@ -1815,6 +1815,7 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	ep->client = in->sys.client;
 	ep->keep_ipa_awake = in->sys.keep_ipa_awake;
 	IPA_ACTIVE_CLIENTS_INC_EP(in->sys.client);
+	ep->active_vote = true;
 
 	IPADBG("client=%d ep=%d\n", in->sys.client, ipa_ep_idx);
 	if (IPA_CLIENT_IS_CONS(in->sys.client)) {
@@ -2258,8 +2259,10 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(in->sys.client))
 		ipa3_install_dflt_flt_rules(ipa_ep_idx);
 
-	if (!ep->keep_ipa_awake)
+	if (!ep->keep_ipa_awake) {
 		IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+		ep->active_vote = false;
+	}
 
 	dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base, cmd.phys_base);
 	ep->uc_offload_state = IPA_WDI_CONNECTED;
@@ -2278,7 +2281,10 @@ uc_timeout:
 			out->clnt_hdl = ipa_ep_idx;
 			dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size,
 					  cmd.base, cmd.phys_base);
-			IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+			if (!ep->keep_ipa_awake) {
+				IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+				ep->active_vote = false;
+			}
 			return -EFAULT;
 		}
 		ep->uc_offload_state &= ~IPA_WDI_FW_SETUP;
@@ -2290,7 +2296,10 @@ uc_timeout:
 		out->clnt_hdl = ipa_ep_idx;
 		dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base,
 				  cmd.phys_base);
-		IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+		if (!ep->keep_ipa_awake) {
+			IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+			ep->active_vote = false;
+		}
 		return -EUCLEAN;
 	}
 	memset(&ipa3_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa3_ep_context));
@@ -2358,6 +2367,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 	struct ipa3_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t tear;
 	bool voted = false;
+	bool retained_vote;
 	int result;
 
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
@@ -2371,6 +2381,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 
 	IPADBG("ep=%d\n", clnt_hdl);
 	ep = &ipa3_ctx->ep[clnt_hdl];
+	retained_vote = ep->active_vote;
 
 	if (ep->uc_offload_state & IPA_WDI_TORN_DOWN)
 		goto release;
@@ -2385,7 +2396,7 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 		return -EFAULT;
 	}
 
-	if (!ep->keep_ipa_awake) {
+	if (!retained_vote) {
 		IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
 		voted = true;
 	}
@@ -2413,6 +2424,9 @@ release:
 	}
 
 	memset(&ipa3_ctx->ep[clnt_hdl], 0, sizeof(struct ipa3_ep_context));
+	if (retained_vote)
+		IPA_ACTIVE_CLIENTS_DEC_EP(
+			ipa3_get_client_mapping(clnt_hdl));
 	IPADBG("client (ep: %d) disconnected\n", clnt_hdl);
 
 	/* for AP+STA stats update */

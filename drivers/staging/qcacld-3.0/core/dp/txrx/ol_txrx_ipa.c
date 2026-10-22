@@ -1696,6 +1696,8 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 					"%s: Enable RX PIPE fail, code %d",
 					__func__, result);
+			ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev,
+						  false, true);
 			ol_txrx_ipa_pipe_down(ipa_res->tx_pipe_handle,
 					      &ipa_res->tx_state);
 			goto smmu_unmap;
@@ -1708,6 +1710,8 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 					"%s: Resume RX PIPE fail, code %d",
 					__func__, result);
+			ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev,
+						  false, true);
 			ol_txrx_ipa_pipe_down(ipa_res->rx_pipe_handle,
 					      &ipa_res->rx_state);
 			ol_txrx_ipa_pipe_down(ipa_res->tx_pipe_handle,

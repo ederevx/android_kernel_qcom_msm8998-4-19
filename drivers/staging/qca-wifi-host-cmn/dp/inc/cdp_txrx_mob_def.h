@@ -341,6 +341,10 @@ struct ol_txrx_ipa_resources {
 	bool tx_comp_doorbell_mapped;
 	bool rx_ready_doorbell_mapped;
 
+	/* Legacy per-pipe connection ownership */
+	bool tx_connected;
+	bool rx_connected;
+
 	/* Hardware disable progress, retained across mapping-only retries */
 	bool pipes_disabled;
 	bool rx_suspended;

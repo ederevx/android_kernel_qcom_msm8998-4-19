@@ -836,6 +836,7 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 	ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev, true, true);
 	ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev, true, false);
 
+	pdev->ipa_resource.pipes_disabled = false;
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -848,21 +849,27 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 QDF_STATUS ol_txrx_ipa_disable_pipes(struct cdp_pdev *ppdev)
 {
 	ol_txrx_pdev_handle pdev = (ol_txrx_pdev_handle)ppdev;
-	int ret;
+	QDF_STATUS status;
+	int ret = 0;
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		  "%s: Disable IPA pipes", __func__);
-	ret = qdf_ipa_wdi_disable_pipes();
-	if (ret) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			  "%s: ipa_wdi_disable_pipes failed: ret=%d",
-			  __func__, ret);
+	if (!pdev->ipa_resource.pipes_disabled) {
+		ret = qdf_ipa_wdi_disable_pipes();
+		if (ret) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+				  "%s: ipa_wdi_disable_pipes failed: ret=%d",
+				  __func__, ret);
+		} else {
+			pdev->ipa_resource.pipes_disabled = true;
+		}
 	}
 
-	if (htt_rx_update_smmu_map(pdev->htt_pdev, false) !=
-	    QDF_STATUS_SUCCESS) {
+	status = htt_rx_update_smmu_map(pdev->htt_pdev, false);
+	if (status != QDF_STATUS_SUCCESS) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			  "IPA SMMU unmap failed");
+			  "IPA SMMU unmap failed: %d", status);
+		return QDF_STATUS_E_FAILURE;
 	}
 
 	return ret ? QDF_STATUS_E_FAILURE : QDF_STATUS_SUCCESS;
@@ -1156,17 +1163,21 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		QDF_IPA_PIPE_OUT_UC_DOOR_BELL_PA(&pipe_out);
 	ipa_res->rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
 	*p_rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
-	ipa_tx_disconnected = false;
-	ipa_rx_disconnected = false;
 
 	if (qdf_mem_smmu_s1_enabled(osdev)) {
-		pld_smmu_map(osdev->dev, ipa_res->tx_comp_doorbell_dmaaddr,
-			     &tx_comp_db_dmaaddr, sizeof(uint32_t));
-		ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
+		if (!pld_smmu_map(osdev->dev,
+				  ipa_res->tx_comp_doorbell_dmaaddr,
+				  &tx_comp_db_dmaaddr, sizeof(uint32_t))) {
+			ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
+			ipa_res->tx_comp_doorbell_mapped = true;
+		}
 
-		pld_smmu_map(osdev->dev, ipa_res->rx_ready_doorbell_dmaaddr,
-			     &rx_rdy_db_dmaaddr, sizeof(uint32_t));
-		ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
+		if (!pld_smmu_map(osdev->dev,
+				  ipa_res->rx_ready_doorbell_dmaaddr,
+				  &rx_rdy_db_dmaaddr, sizeof(uint32_t))) {
+			ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
+			ipa_res->rx_ready_doorbell_mapped = true;
+		}
 	}
 
 	return QDF_STATUS_SUCCESS;
@@ -1181,7 +1192,15 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
  */
 QDF_STATUS ol_txrx_ipa_cleanup(uint32_t tx_pipe_handle, uint32_t rx_pipe_handle)
 {
+	ol_txrx_pdev_handle pdev;
+	struct ol_txrx_ipa_resources *ipa_res;
+	qdf_device_t osdev;
 	int ret;
+
+	pdev = cds_get_context(QDF_MODULE_ID_TXRX);
+	if (!pdev)
+		return QDF_STATUS_E_INVAL;
+	ipa_res = &pdev->ipa_resource;
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 		    "%s: Disconnect TX PIPE tx_pipe_handle=0x%x",
@@ -1205,7 +1224,8 @@ QDF_STATUS ol_txrx_ipa_cleanup(uint32_t tx_pipe_handle, uint32_t rx_pipe_handle)
 		return QDF_STATUS_E_FAILURE;
 	}
 
-	return QDF_STATUS_SUCCESS;
+	osdev = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
+	return ol_txrx_ipa_unmap_doorbells(ipa_res, osdev);
 }
 
 /**
@@ -1574,6 +1594,8 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 		goto smmu_unmap;
 	}
 	ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev, true, true);
+	ipa_res->tx_suspended = false;
+	ipa_res->tx_disabled = false;
 
 	/* ACTIVATE RX PIPE */
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
@@ -1594,6 +1616,8 @@ QDF_STATUS ol_txrx_ipa_enable_pipes(struct cdp_pdev *ppdev)
 		goto smmu_unmap;
 	}
 	ol_txrx_ipa_uc_set_active((struct cdp_pdev *)pdev, true, false);
+	ipa_res->rx_suspended = false;
+	ipa_res->rx_disabled = false;
 
 	return QDF_STATUS_SUCCESS;
 
@@ -1617,41 +1641,54 @@ QDF_STATUS ol_txrx_ipa_disable_pipes(struct cdp_pdev *ppdev)
 {
 	ol_txrx_pdev_handle pdev = (ol_txrx_pdev_handle)ppdev;
 	struct ol_txrx_ipa_resources *ipa_res = &pdev->ipa_resource;
-	int result;
+	int result = 0;
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 			"%s: Disable RX PIPE", __func__);
-	result = qdf_ipa_suspend_wdi_pipe(ipa_res->rx_pipe_handle);
-	if (result) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				"%s: Suspend RX PIPE fail, code %d",
-				__func__, result);
-		goto smmu_unmap;
+	if (!ipa_res->rx_suspended) {
+		result = qdf_ipa_suspend_wdi_pipe(ipa_res->rx_pipe_handle);
+		if (result) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+					"%s: Suspend RX PIPE fail, code %d",
+					__func__, result);
+			goto smmu_unmap;
+		}
+		ipa_res->rx_suspended = true;
 	}
 
-	result = qdf_ipa_disable_wdi_pipe(ipa_res->rx_pipe_handle);
-	if (result) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				"%s: Disable RX PIPE fail, code %d",
-				__func__, result);
-		goto smmu_unmap;
+	if (!ipa_res->rx_disabled) {
+		result = qdf_ipa_disable_wdi_pipe(ipa_res->rx_pipe_handle);
+		if (result) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+					"%s: Disable RX PIPE fail, code %d",
+					__func__, result);
+			goto smmu_unmap;
+		}
+		ipa_res->rx_disabled = true;
 	}
 
 	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
 			"%s: Disable TX PIPE", __func__);
-	result = qdf_ipa_suspend_wdi_pipe(ipa_res->tx_pipe_handle);
-	if (result) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				"%s: Suspend TX PIPE fail, code %d",
-				__func__, result);
-		goto smmu_unmap;
+	if (!ipa_res->tx_suspended) {
+		result = qdf_ipa_suspend_wdi_pipe(ipa_res->tx_pipe_handle);
+		if (result) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+					"%s: Suspend TX PIPE fail, code %d",
+					__func__, result);
+			goto smmu_unmap;
+		}
+		ipa_res->tx_suspended = true;
 	}
-	result = qdf_ipa_disable_wdi_pipe(ipa_res->tx_pipe_handle);
-	if (result) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				"%s: Disable TX PIPE fail, code %d",
-				__func__, result);
-		goto smmu_unmap;
+
+	if (!ipa_res->tx_disabled) {
+		result = qdf_ipa_disable_wdi_pipe(ipa_res->tx_pipe_handle);
+		if (result) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+					"%s: Disable TX PIPE fail, code %d",
+					__func__, result);
+			goto smmu_unmap;
+		}
+		ipa_res->tx_disabled = true;
 	}
 
 smmu_unmap:
@@ -1659,6 +1696,7 @@ smmu_unmap:
 	    QDF_STATUS_SUCCESS) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 			  "IPA SMMU unmap failed");
+		return QDF_STATUS_E_FAILURE;
 	}
 
 	return result ? QDF_STATUS_E_FAILURE : QDF_STATUS_SUCCESS;

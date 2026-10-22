@@ -340,6 +340,13 @@ struct ol_txrx_ipa_resources {
 	/* WLAN-owned doorbell mappings */
 	bool tx_comp_doorbell_mapped;
 	bool rx_ready_doorbell_mapped;
+
+	/* Hardware disable progress, retained across mapping-only retries */
+	bool pipes_disabled;
+	bool rx_suspended;
+	bool rx_disabled;
+	bool tx_suspended;
+	bool tx_disabled;
 };
 #endif
 

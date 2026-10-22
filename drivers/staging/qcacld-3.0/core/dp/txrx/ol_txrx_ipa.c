@@ -624,42 +624,41 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
  *
  * Return: QDF_STATUS
  */
+static bool ipa_tx_disconnected;
+static bool ipa_rx_disconnected;
+
 QDF_STATUS ol_txrx_ipa_cleanup(uint32_t tx_pipe_handle, uint32_t rx_pipe_handle)
 {
-	int ret;
-	struct ol_txrx_ipa_resources *ipa_res;
-	qdf_device_t osdev = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
-	ol_txrx_pdev_handle pdev = cds_get_context(QDF_MODULE_ID_TXRX);
+	int ret = 0;
 
-	if (!pdev || !osdev) {
-		ol_txrx_err("%s invalid instance", __func__);
-		return QDF_STATUS_E_FAILURE;
+	if (!ipa_tx_disconnected) {
+		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
+			  "%s: Disconnect TX PIPE tx_pipe_handle=0x%x",
+			  __func__, tx_pipe_handle);
+		ret = qdf_ipa_disconnect_wdi_pipe(tx_pipe_handle);
+		if (ret) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+				  "Tx pipe cleanup failed: ret=%d", ret);
+			return QDF_STATUS_E_FAILURE;
+		}
+		ipa_tx_disconnected = true;
 	}
 
-	ipa_res = &pdev->ipa_resource;
-	if (osdev->smmu_s1_enabled) {
-		ret = pld_smmu_unmap(osdev->dev,
-				     ipa_res->rx_ready_doorbell_dmaaddr,
-				     sizeof(uint32_t));
-		if (ret)
-			ol_txrx_err("%s rx_ready, smmu unmap failed", __func__);
-
-		ret = pld_smmu_unmap(osdev->dev,
-				     ipa_res->tx_comp_doorbell_dmaaddr,
-				     sizeof(uint32_t));
-		if (ret)
-			ol_txrx_err("%s tx_comp, smmu unmap failed", __func__);
+	if (!ipa_rx_disconnected) {
+		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
+			  "%s: Disconnect RX PIPE rx_pipe_handle=0x%x",
+			  __func__, rx_pipe_handle);
+		ret = qdf_ipa_disconnect_wdi_pipe(rx_pipe_handle);
+		if (ret) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+				  "Rx pipe cleanup failed: ret=%d", ret);
+			return QDF_STATUS_E_FAILURE;
+		}
+		ipa_rx_disconnected = true;
 	}
 
-	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
-		  "%s: Disconnect IPA pipe", __func__);
-	ret = qdf_ipa_wdi_disconn_pipes();
-	if (ret) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-			  "ipa_wdi_disconn_pipes failed: ret=%d", ret);
-		return QDF_STATUS_E_FAILURE;
-	}
-
+	ipa_tx_disconnected = false;
+	ipa_rx_disconnected = false;
 	return QDF_STATUS_SUCCESS;
 }
 
@@ -1112,6 +1111,8 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		QDF_IPA_PIPE_OUT_UC_DOOR_BELL_PA(&pipe_out);
 	ipa_res->rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
 	*p_rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
+	ipa_tx_disconnected = false;
+	ipa_rx_disconnected = false;
 
 	if (qdf_mem_smmu_s1_enabled(osdev)) {
 		pld_smmu_map(osdev->dev, ipa_res->tx_comp_doorbell_dmaaddr,

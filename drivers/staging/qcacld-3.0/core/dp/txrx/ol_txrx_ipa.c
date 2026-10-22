@@ -558,6 +558,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 	qdf_ipa_wdi_conn_out_params_t pipe_out;
 	qdf_device_t osdev = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
 	uint32_t tx_comp_db_dmaaddr = 0, rx_rdy_db_dmaaddr = 0;
+	QDF_STATUS cleanup_status;
 	int ret;
 
 	if (!osdev) {
@@ -638,6 +639,8 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 			  "%s: ipa_wdi_conn_pipes: IPA pipe setup failed: ret=%d",
 			  __func__, ret);
+		if (ret == -EUCLEAN)
+			goto setup_rollback;
 		qdf_mem_free(pipe_in);
 		return QDF_STATUS_E_FAILURE;
 	}
@@ -661,7 +664,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &tx_comp_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA TX doorbell map failed");
-			goto doorbell_map_fail;
+			goto setup_rollback;
 		}
 		ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
 		ipa_res->tx_comp_doorbell_mapped = true;
@@ -671,7 +674,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &rx_rdy_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA RX doorbell map failed");
-			goto doorbell_map_fail;
+			goto setup_rollback;
 		}
 		ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
 		ipa_res->rx_ready_doorbell_mapped = true;
@@ -680,9 +683,12 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 	qdf_mem_free(pipe_in);
 	return QDF_STATUS_SUCCESS;
 
-doorbell_map_fail:
+setup_rollback:
 	qdf_mem_free(pipe_in);
-	ol_txrx_ipa_cleanup(*p_tx_pipe_handle, *p_rx_pipe_handle);
+	cleanup_status = ol_txrx_ipa_cleanup(0, 0);
+	if (QDF_IS_STATUS_ERROR(cleanup_status))
+		panic("wlan: incomplete IPA teardown during setup: %d",
+		      cleanup_status);
 	return QDF_STATUS_E_FAILURE;
 }
 
@@ -1083,7 +1089,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 	qdf_ipa_wdi_in_params_t pipe_in;
 	qdf_ipa_wdi_out_params_t pipe_out;
 	uint32_t tx_comp_db_dmaaddr = 0, rx_rdy_db_dmaaddr = 0;
-
+	QDF_STATUS cleanup_status;
 	int ret;
 
 	if (!osdev) {
@@ -1207,8 +1213,11 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 	return QDF_STATUS_SUCCESS;
 
 fail_cleanup:
-	ol_txrx_ipa_cleanup(ipa_res->tx_pipe_handle,
-			    ipa_res->rx_pipe_handle);
+	cleanup_status = ol_txrx_ipa_cleanup(ipa_res->tx_pipe_handle,
+					    ipa_res->rx_pipe_handle);
+	if (QDF_IS_STATUS_ERROR(cleanup_status))
+		panic("wlan: incomplete IPA teardown during setup: %d",
+		      cleanup_status);
 	return QDF_STATUS_E_FAILURE;
 }
 

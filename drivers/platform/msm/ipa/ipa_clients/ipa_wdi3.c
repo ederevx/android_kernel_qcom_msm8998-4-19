@@ -769,8 +769,10 @@ fail_setup_sys_pipe:
 	return ret;
 
 fail_cleanup:
-	if (ipa_wdi_disconn_pipes())
+	if (ipa_wdi_disconn_pipes()) {
 		IPA_WDI_ERR("fail to release partial WDI setup\n");
+		return -EUCLEAN;
+	}
 	return ret;
 }
 EXPORT_SYMBOL(ipa_wdi_conn_pipes);

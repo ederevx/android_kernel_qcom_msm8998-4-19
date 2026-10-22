@@ -2770,7 +2770,6 @@ int ipa3_disable_wdi_pipe(u32 clnt_hdl)
 	}
 	ep->uc_offload_state &= ~IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) disabled\n", clnt_hdl);
-	ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain());
 
 uc_timeout:
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
@@ -3434,15 +3433,10 @@ int ipa3_wdi_pg_init(void)
 
 	mutex_lock(&ipa3_wdi_pg_mutex);
 	if (ipa3_wdi_pg.pool) {
-		if (ipa3_wdi_pg_outstanding() &&
-		    (ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain()) ||
-		     ipa3_wdi_pg_outstanding())) {
+		if (ipa3_wdi_pg_outstanding()) {
 			mutex_unlock(&ipa3_wdi_pg_mutex);
 			return -EBUSY;
 		}
-		spin_lock_irqsave(&ipa3_wdi_pg.lock, flags);
-		ipa3_wdi_pg_free_list();
-		spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
 		mutex_unlock(&ipa3_wdi_pg_mutex);
 		return 0;
 	}
@@ -3607,33 +3601,6 @@ next_try:
 	return -EAGAIN;
 }
 
-int ipa3_wdi_pg_retry_failed(struct iommu_domain *domain)
-{
-	struct ipa3_wdi_pg *pg;
-	unsigned long flags, iova;
-	phys_addr_t pa;
-	u32 i;
-
-	if (!ipa3_wdi_pg_supported() || !domain ||
-	    !READ_ONCE(ipa3_wdi_pg.pool))
-		return 0;
-
-	for (i = 0; i < IPA_WDI_PG_MAX; i++) {
-		spin_lock_irqsave(&ipa3_wdi_pg.lock, flags);
-		pg = &ipa3_wdi_pg.pool[i];
-		if (pg->state != IPA_WDI_PG_FAILED) {
-			spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
-			continue;
-		}
-		iova = pg->iova;
-		pa = pg->pa;
-		spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
-
-		ipa3_wdi_pg_put(domain, iova, pa);
-	}
-
-	return ipa3_wdi_pg_outstanding() ? 1 : 0;
-}
 int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_WLAN);
@@ -3794,9 +3761,6 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 		if (ret && (!first_ret || first_ret == -ENOENT))
 			first_ret = ret;
 	}
-
-	if (first_ret == -ENOENT)
-		first_ret = 0;
 
 	return first_ret;
 }

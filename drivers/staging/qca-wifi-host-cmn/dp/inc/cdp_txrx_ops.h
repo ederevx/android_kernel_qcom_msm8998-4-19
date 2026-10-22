@@ -80,7 +80,7 @@ struct cdp_cmn_ops {
 
 	int (*txrx_pdev_post_attach)(struct cdp_pdev *pdev);
 
-	void (*txrx_pdev_pre_detach)(struct cdp_pdev *pdev, int force);
+	QDF_STATUS (*txrx_pdev_pre_detach)(struct cdp_pdev *pdev, int force);
 
 	void (*txrx_pdev_detach)(struct cdp_pdev *pdev, int force);
 
@@ -1245,6 +1245,8 @@ struct cdp_ipa_ops {
 #endif /* CONFIG_IPA_WDI_UNIFIED_API */
 	QDF_STATUS (*ipa_cleanup)(uint32_t tx_pipe_handle,
 		uint32_t rx_pipe_handle);
+	QDF_STATUS (*ipa_set_smmu_params)(struct cdp_pdev *pdev,
+		bool enabled, bool identity);
 	QDF_STATUS (*ipa_setup_iface)(char *ifname, uint8_t *mac_addr,
 		qdf_ipa_client_type_t prod_client,
 		qdf_ipa_client_type_t cons_client,

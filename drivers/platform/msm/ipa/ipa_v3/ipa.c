@@ -8793,6 +8793,7 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	unsigned long iova, phys_addr_t paddr, size_t size, int prot)
 {
 	struct ipa_smmu_cb_ctx *cb = NULL;
+	int ret;
 
 	IPADBG_LOW("domain =0x%pK iova 0x%lx\n", domain, iova);
 	IPADBG_LOW("paddr =0x%pa size 0x%x\n", &paddr, (u32)size);
@@ -8836,7 +8837,18 @@ int ipa3_iommu_map(struct iommu_domain *domain,
 	if (cb->is_cache_coherent)
 		prot |= IOMMU_CACHE;
 
-	return iommu_map(domain, iova, paddr, size, prot);
+	ret = iommu_map(domain, iova, paddr, size, prot);
+	if (ret == -EEXIST) {
+		static bool once;
+
+		if (!READ_ONCE(once)) {
+			WRITE_ONCE(once, true);
+			pr_err("IPADIAG iommu map eexist iova=0x%lx pa=0x%pa size=0x%zx\n",
+			       iova, &paddr, size);
+		}
+	}
+
+	return ret;
 }
 
 int ipa3_iommu_unmap(struct iommu_domain *domain, unsigned long iova,

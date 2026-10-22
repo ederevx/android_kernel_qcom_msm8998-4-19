@@ -1302,8 +1302,17 @@ static int arm_smmu_power_on_atomic(struct arm_smmu_power_resources *pwr)
 	}
 
 	ret = arm_smmu_enable_clocks(pwr);
-	if (!ret)
+	if (!ret) {
 		pwr->clock_refs_count = 1;
+	} else {
+		static bool once;
+
+		if (!READ_ONCE(once)) {
+			WRITE_ONCE(once, true);
+			pr_err("IPADIAG smmu atomic power-on failed ret=%d pwr=%d clk=%d\n",
+			       ret, pwr->power_count, pwr->clock_refs_count);
+		}
+	}
 
 	spin_unlock_irqrestore(&pwr->clock_refs_lock, flags);
 	return ret;
@@ -3171,6 +3180,9 @@ static void arm_smmu_detach_dev(struct iommu_domain *domain,
 	else
 		arm_smmu_power_on(smmu->pwr);
 
+	pr_info("IPADIAG smmu detach cb=%d atomic=%d pwr=%d clk=%d\n",
+		smmu_domain->cfg.cbndx, atomic_domain,
+		smmu->pwr->power_count, smmu->pwr->clock_refs_count);
 	arm_smmu_domain_remove_master(smmu_domain, fwspec);
 	arm_smmu_power_off(smmu->pwr);
 }
@@ -3568,6 +3580,10 @@ out_power_off:
 	}
 
 	arm_smmu_power_off(smmu->pwr);
+	if (!ret)
+		pr_info("IPADIAG smmu attach cb=%d atomic=%d pwr=%d clk=%d\n",
+			smmu_domain->cfg.cbndx, atomic_domain,
+			smmu->pwr->power_count, smmu->pwr->clock_refs_count);
 
 	return ret;
 }

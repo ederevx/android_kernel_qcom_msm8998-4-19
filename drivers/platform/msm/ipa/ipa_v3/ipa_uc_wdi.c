@@ -3416,7 +3416,15 @@ do_unmap:
 		unmapped = ipa3_iommu_unmap(domain, iova, PAGE_SIZE);
 		spin_lock_irqsave(&ipa3_wdi_pg.lock, flags);
 		if (unmapped != PAGE_SIZE) {
+			static bool once;
+
+			pg->ref = 1;
 			pg->state = IPA_WDI_PG_FAILED;
+			if (!READ_ONCE(once)) {
+				WRITE_ONCE(once, true);
+				pr_err("IPADIAG wdi pg_put short iova=0x%lx pa=0x%pa unmapped=%zu\n",
+				       iova, &pa, unmapped);
+			}
 			spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
 			return -EIO;
 		}

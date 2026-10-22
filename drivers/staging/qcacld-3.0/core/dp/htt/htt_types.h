@@ -93,9 +93,27 @@ struct htt_list_node {
 	struct htt_list_node *next;
 };
 
+enum htt_rx_wdi_owner_state {
+	HTT_RX_WDI_FREE,
+	HTT_RX_WDI_RESERVED,
+	HTT_RX_WDI_POSTED,
+	HTT_RX_WDI_PENDING,
+};
+
+struct htt_rx_wdi_owner {
+	struct htt_list_node node;
+	qdf_nbuf_t netbuf;
+	phys_addr_t pa;
+	unsigned long iova;
+	unsigned long mapped;
+	uint8_t nr_pages;
+	uint8_t state;
+};
+
 struct htt_rx_hash_entry {
 	qdf_dma_addr_t paddr;
 	qdf_nbuf_t netbuf;
+	struct htt_rx_wdi_owner *wdi_owner;
 	A_UINT8 fromlist;
 	struct htt_list_node listnode;
 #ifdef RX_HASH_DEBUG
@@ -116,12 +134,18 @@ struct htt_rx_hash_bucket {
  * Micro controller datapath offload
  * WLAN TX resources
  */
+struct htt_ipa_uc_tx_map {
+	uint32_t mapped_pages;
+	uint32_t first_live;
+};
+
 struct htt_ipa_uc_tx_resource_t {
 	qdf_shared_mem_t *tx_ce_idx;
 	qdf_shared_mem_t *tx_comp_ring;
 
 	uint32_t tx_comp_idx_paddr;
 	qdf_shared_mem_t **tx_buf_pool_strg;
+	struct htt_ipa_uc_tx_map *tx_buf_maps;
 	uint32_t alloc_tx_buf_cnt;
 };
 
@@ -369,6 +393,13 @@ struct htt_pdev_t {
 		struct htt_rx_hash_bucket **hash_table;
 		uint32_t listnode_offset;
 		bool smmu_map;
+		bool ipa_smmu_map_failed;
+		struct htt_rx_wdi_owner *wdi_owners;
+		struct htt_rx_wdi_owner **wdi_owners_ring;
+		struct htt_list_node wdi_owner_free;
+		struct htt_list_node wdi_owner_pending;
+		qdf_spinlock_t wdi_owner_lock;
+		bool wdi_draining;
 	} rx_ring;
 
 #ifndef CONFIG_HL_SUPPORT
@@ -424,6 +455,8 @@ struct htt_pdev_t {
 	struct htt_ipa_uc_tx_resource_t ipa_uc_tx_rsc;
 	struct htt_ipa_uc_rx_resource_t ipa_uc_rx_rsc;
 	int is_ipa_uc_enabled;
+	bool ipa_wdi_smmu_enabled;
+	bool ipa_wdi_smmu_identity;
 
 	struct htt_tx_credit_t htt_tx_credit;
 

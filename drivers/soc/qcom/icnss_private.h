@@ -374,6 +374,7 @@ struct icnss_priv {
 	bool vbatt_supported;
 	char function_name[WLFW_FUNCTION_NAME_LEN + 1];
 	bool is_ssr;
+	bool removing;
 	struct kobject *icnss_kobject;
 	atomic_t is_shutdown;
 	phys_addr_t hang_event_data_pa;

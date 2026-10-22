@@ -192,6 +192,7 @@ struct cds_context {
 
 	struct cdp_pdev *pdev_txrx_ctx;
 	void *dp_soc;
+	bool dp_pre_detached;
 
 	/* Configuration handle used to get system configuration */
 	struct cdp_cfg *cfg_ctx;

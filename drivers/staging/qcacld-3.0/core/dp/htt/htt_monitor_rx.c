@@ -84,22 +84,28 @@ void htt_rx_mon_note_capture_channel(htt_pdev_handle pdev, int mon_ch)
 static
 int htt_mon_rx_handle_amsdu_packet(qdf_nbuf_t msdu, htt_pdev_handle pdev,
 				   uint32_t **msg_word, uint32_t amsdu_len,
-				   uint32_t *frag_cnt)
+				   uint32_t *frag_cnt, bool *retained)
 {
 	qdf_nbuf_t frag_nbuf;
 	qdf_nbuf_t prev_frag_nbuf;
 	uint32_t len;
 	uint32_t last_frag;
 	qdf_dma_addr_t paddr;
+	bool found;
 
+	*retained = false;
 	*msg_word += HTT_RX_IN_ORD_PADDR_IND_MSDU_DWORDS;
 	paddr = htt_rx_in_ord_paddr_get(*msg_word);
-	frag_nbuf = htt_rx_in_order_netbuf_pop(pdev, paddr);
+	found = false;
+	frag_nbuf = htt_rx_in_order_netbuf_pop(pdev, paddr, &found);
+	if (found)
+		*frag_cnt = *frag_cnt + 1;
 	if (qdf_unlikely(!frag_nbuf)) {
-		qdf_print("netbuf pop failed!");
+		if (!found)
+			qdf_print("netbuf pop failed!");
+		*retained = found;
 		return 0;
 	}
-	*frag_cnt = *frag_cnt + 1;
 	last_frag = ((struct htt_rx_in_ord_paddr_ind_msdu_t *)*msg_word)->
 		msdu_info;
 	qdf_nbuf_append_ext_list(msdu, frag_nbuf, amsdu_len);
@@ -118,16 +124,20 @@ int htt_mon_rx_handle_amsdu_packet(qdf_nbuf_t msdu, htt_pdev_handle pdev,
 	while (!last_frag) {
 		*msg_word += HTT_RX_IN_ORD_PADDR_IND_MSDU_DWORDS;
 		paddr = htt_rx_in_ord_paddr_get(*msg_word);
-		frag_nbuf = htt_rx_in_order_netbuf_pop(pdev, paddr);
+		found = false;
+		frag_nbuf = htt_rx_in_order_netbuf_pop(pdev, paddr, &found);
 		last_frag = ((struct htt_rx_in_ord_paddr_ind_msdu_t *)
 			     *msg_word)->msdu_info;
 
+		if (found)
+			*frag_cnt = *frag_cnt + 1;
 		if (qdf_unlikely(!frag_nbuf)) {
-			qdf_print("netbuf pop failed!");
+			if (!found)
+				qdf_print("netbuf pop failed!");
+			*retained = found;
 			prev_frag_nbuf->next = NULL;
 			return 0;
 		}
-		*frag_cnt = *frag_cnt + 1;
 		qdf_nbuf_set_pktlen(frag_nbuf, HTT_RX_BUF_SIZE);
 		qdf_nbuf_unmap(pdev->osdev, frag_nbuf, QDF_DMA_FROM_DEVICE);
 
@@ -480,6 +490,18 @@ void htt_rx_mon_get_rx_status(htt_pdev_handle pdev,
 	rx_status->chan_noise_floor = pdev->txrx_pdev->chan_noise_floor;
 }
 
+static void htt_mon_rx_free_chain(qdf_nbuf_t buf)
+{
+	qdf_nbuf_t next;
+
+	while (buf) {
+		next = qdf_nbuf_next(buf);
+		qdf_nbuf_set_next(buf, NULL);
+		qdf_nbuf_free(buf);
+		buf = next;
+	}
+}
+
 /**
  * htt_rx_mon_amsdu_rx_in_order_pop_ll() - Monitor mode HTT Rx in order pop
  * function
@@ -508,12 +530,15 @@ int htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 	uint32_t len;
 	uint32_t last_frag;
 	qdf_dma_addr_t paddr;
+	bool found;
 	static uint8_t preamble_type;
 	static uint32_t vht_sig_a_1;
 	static uint32_t vht_sig_a_2;
 
 	HTT_ASSERT1(htt_rx_in_order_ring_elems(pdev) != 0);
 
+	*head_msdu = NULL;
+	*tail_msdu = NULL;
 	rx_ind_data = qdf_nbuf_data(rx_ind_msg);
 	msg_word = (uint32_t *)rx_ind_data;
 
@@ -530,14 +555,18 @@ int htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 	msg_word = (uint32_t *)(rx_ind_data +
 				 HTT_RX_IN_ORD_PADDR_IND_HDR_BYTES);
 	paddr = htt_rx_in_ord_paddr_get(msg_word);
-	msdu = htt_rx_in_order_netbuf_pop(pdev, paddr);
+	found = false;
+	msdu = htt_rx_in_order_netbuf_pop(pdev, paddr, &found);
+	if (found)
+		*replenish_cnt = *replenish_cnt + 1;
 
 	if (qdf_unlikely(!msdu)) {
-		qdf_print("netbuf pop failed!");
+		if (!found)
+			qdf_print("netbuf pop failed!");
+		*head_msdu = NULL;
 		*tail_msdu = NULL;
-		return 0;
+		return found ? 1 : 0;
 	}
-	*replenish_cnt = *replenish_cnt + 1;
 
 	while (msdu_count > 0) {
 		msdu_count--;
@@ -555,21 +584,31 @@ int htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 		rx_desc = htt_rx_desc(msdu);
 		if ((unsigned int)(*(uint32_t *)&rx_desc->attention) &
 				RX_DESC_ATTN_MPDU_LEN_ERR_BIT) {
+			if (prev)
+				qdf_nbuf_set_next(prev, NULL);
 			qdf_nbuf_free(msdu);
 			last_frag = ((struct htt_rx_in_ord_paddr_ind_msdu_t *)
 			     msg_word)->msdu_info;
 			while (!last_frag) {
 				msg_word += HTT_RX_IN_ORD_PADDR_IND_MSDU_DWORDS;
 				paddr = htt_rx_in_ord_paddr_get(msg_word);
-				msdu = htt_rx_in_order_netbuf_pop(pdev, paddr);
+				found = false;
+				msdu = htt_rx_in_order_netbuf_pop(pdev, paddr, &found);
 				last_frag = ((struct
 					htt_rx_in_ord_paddr_ind_msdu_t *)
 					msg_word)->msdu_info;
+				if (found)
+					*replenish_cnt = *replenish_cnt + 1;
 				if (qdf_unlikely(!msdu)) {
-					qdf_print("netbuf pop failed!");
-					return 0;
+					if (!found)
+						qdf_print("netbuf pop failed!");
+					if (*head_msdu) {
+						htt_mon_rx_free_chain(*head_msdu);
+						*head_msdu = NULL;
+					}
+					*tail_msdu = NULL;
+					return found ? 1 : 0;
 				}
-				*replenish_cnt = *replenish_cnt + 1;
 				qdf_nbuf_unmap(pdev->osdev, msdu,
 					       QDF_DMA_FROM_DEVICE);
 				qdf_nbuf_free(msdu);
@@ -683,12 +722,20 @@ int htt_rx_mon_amsdu_rx_in_order_pop_ll(htt_pdev_handle pdev,
 			 * length, msdu->data_len is sum of length's of
 			 * remaining msdu's other than parent.
 			 */
+			bool retained = false;
+
 			if (!htt_mon_rx_handle_amsdu_packet(msdu, pdev,
 							    &msg_word,
 							    amsdu_len,
-							    replenish_cnt)) {
+							    replenish_cnt,
+							    &retained)) {
 				qdf_print("failed to handle amsdu packet");
-				return 0;
+				if (*head_msdu) {
+					htt_mon_rx_free_chain(*head_msdu);
+					*head_msdu = NULL;
+				}
+				*tail_msdu = NULL;
+				return retained ? 1 : 0;
 			}
 		}
 
@@ -697,13 +744,20 @@ next_pop:
 		if (msdu_count) {
 			msg_word += HTT_RX_IN_ORD_PADDR_IND_MSDU_DWORDS;
 			paddr = htt_rx_in_ord_paddr_get(msg_word);
-			next = htt_rx_in_order_netbuf_pop(pdev, paddr);
+			found = false;
+			next = htt_rx_in_order_netbuf_pop(pdev, paddr, &found);
+			if (found)
+				*replenish_cnt = *replenish_cnt + 1;
 			if (qdf_unlikely(!next)) {
-				qdf_print("netbuf pop failed!");
+				if (!found)
+					qdf_print("netbuf pop failed!");
+				if (*head_msdu) {
+					htt_mon_rx_free_chain(*head_msdu);
+					*head_msdu = NULL;
+				}
 				*tail_msdu = NULL;
-				return 0;
+				return found ? 1 : 0;
 			}
-			*replenish_cnt = *replenish_cnt + 1;
 			if (msdu)
 				qdf_nbuf_set_next(msdu, next);
 			msdu = next;

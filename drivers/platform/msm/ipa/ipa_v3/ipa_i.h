@@ -249,6 +249,9 @@ enum {
 #define IPA_WDI_TX_DB_RES			7
 #define IPA_WDI_MAX_RES				8
 
+#define IPA_UC_ALIAS_BASE			0x20000000ULL
+#define IPA_UC_ALIAS_LIMIT			0x40000000ULL
+
 /* use QMAP header reserved bit to identify tethered traffic */
 #define IPA_QMAP_TETH_BIT (1 << 30)
 
@@ -3094,6 +3097,9 @@ int ipa3_init_interrupts(void);
 struct iommu_domain *ipa3_get_smmu_domain(void);
 int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
 int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
+bool ipa3_wdi_pg_supported(void);
+int ipa3_wdi_pg_init(void);
+int ipa3_wdi_pg_retry_failed(struct iommu_domain *domain);
 int ipa3_set_flt_tuple_mask(int pipe_idx, struct ipahal_reg_hash_tuple *tuple);
 int ipa3_set_rt_tuple_mask(int tbl_idx, struct ipahal_reg_hash_tuple *tuple);
 void ipa3_set_resorce_groups_min_max_limits(void);

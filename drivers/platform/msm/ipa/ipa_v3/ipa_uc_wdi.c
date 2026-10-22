@@ -47,13 +47,11 @@ struct ipa_uc_wdi_mapping {
 	size_t original_unmapped;
 	size_t alias_mapped;
 	size_t alias_unmapped;
-	bool counted;
 };
 
 struct ipa_uc_wdi_resource {
 	struct ipa_uc_wdi_mapping *maps;
 	unsigned int nents;
-	bool valid;
 };
 
 static struct ipa_uc_wdi_resource ipa_uc_wdi_res[IPA_WDI_MAX_RES];
@@ -683,7 +681,7 @@ static void ipa_uc_wdi_retire_va(struct ipa_smmu_cb_ctx *cb)
 		return;
 
 	for (i = 0; i < IPA_WDI_MAX_RES; i++)
-		if (ipa_uc_wdi_res[i].valid)
+		if (ipa_uc_wdi_res[i].maps)
 			return;
 
 	cb->next_addr = ipa_uc_wdi_va_baseline;
@@ -726,7 +724,7 @@ static int ipa_create_uc_smmu_mapping_pa(int res_idx, phys_addr_t pa,
 
 	mutex_lock(&ipa_uc_wdi_lock);
 	res = &ipa_uc_wdi_res[res_idx];
-	if (res->valid) {
+	if (res->maps) {
 		ret = -EBUSY;
 		goto out_unlock;
 	}
@@ -749,7 +747,6 @@ static int ipa_create_uc_smmu_mapping_pa(int res_idx, phys_addr_t pa,
 
 	res->maps = map;
 	res->nents = 1;
-	res->valid = true;
 	map->pa = map_pa;
 	map->iova = va;
 	map->size = size;
@@ -770,12 +767,10 @@ static int ipa_create_uc_smmu_mapping_pa(int res_idx, phys_addr_t pa,
 		kfree(map);
 		res->maps = NULL;
 		res->nents = 0;
-		res->valid = false;
 		ipa_uc_wdi_retire_va(cb);
 		goto out_unlock;
 	}
 
-	map->counted = true;
 	ipa3_ctx->wdi_map_cnt++;
 	*iova = va + off;
 
@@ -895,7 +890,7 @@ static int ipa_create_uc_smmu_mapping_sgt(int res_idx,
 
 	mutex_lock(&ipa_uc_wdi_lock);
 	res = &ipa_uc_wdi_res[res_idx];
-	if (res->valid) {
+	if (res->maps) {
 		ret = -EBUSY;
 		goto out_unlock;
 	}
@@ -918,7 +913,6 @@ static int ipa_create_uc_smmu_mapping_sgt(int res_idx,
 
 	res->maps = map;
 	res->nents = sgt->nents;
-	res->valid = true;
 	cb->next_addr = start + total;
 
 	va = start;
@@ -936,7 +930,6 @@ static int ipa_create_uc_smmu_mapping_sgt(int res_idx,
 					&map[i].alias_mapped);
 		if (ret)
 			break;
-		map[i].counted = true;
 		ipa3_ctx->wdi_map_cnt++;
 		va += map[i].size;
 	}
@@ -948,15 +941,14 @@ static int ipa_create_uc_smmu_mapping_sgt(int res_idx,
 		if (ret == -EUCLEAN)
 			goto out_unlock;
 		for (i = 0; i < sgt->nents; i++) {
-			if (map[i].counted) {
-				map[i].counted = false;
+			if (map[i].size &&
+			    map[i].original_mapped == map[i].size &&
+			    map[i].alias_mapped == map[i].size)
 				ipa3_ctx->wdi_map_cnt--;
-			}
 		}
 		kfree(map);
 		res->maps = NULL;
 		res->nents = 0;
-		res->valid = false;
 		ipa_uc_wdi_retire_va(cb);
 		goto out_unlock;
 	}
@@ -1031,7 +1023,7 @@ static int ipa_release_uc_smmu_mappings(enum ipa_client_type client)
 	mutex_lock(&ipa_uc_wdi_lock);
 	for (i = start; i <= end; i++) {
 		res = &ipa_uc_wdi_res[i];
-		if (!res->valid)
+		if (!res->maps)
 			continue;
 
 		done = true;
@@ -1047,15 +1039,14 @@ static int ipa_release_uc_smmu_mappings(enum ipa_client_type client)
 			continue;
 
 		for (j = 0; j < res->nents; j++) {
-			if (res->maps[j].counted) {
-				res->maps[j].counted = false;
+			if (res->maps[j].size &&
+			    res->maps[j].original_mapped == res->maps[j].size &&
+			    res->maps[j].alias_mapped == res->maps[j].size)
 				ipa3_ctx->wdi_map_cnt--;
-			}
 		}
 		kfree(res->maps);
 		res->maps = NULL;
 		res->nents = 0;
-		res->valid = false;
 	}
 
 	if (!ret)
@@ -1800,14 +1791,14 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	ipa_ep_idx = ipa3_get_ep_mapping(in->sys.client);
 	if (ipa_ep_idx == -1) {
 		IPAERR("fail to alloc EP.\n");
-		goto fail;
+		return -EINVAL;
 	}
 
 	ep = &ipa3_ctx->ep[ipa_ep_idx];
 
 	if (ep->valid) {
 		IPAERR("EP already allocated.\n");
-		goto fail;
+		return -EBUSY;
 	}
 
 	memset(&ipa3_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa3_ep_context));
@@ -2279,7 +2270,7 @@ uc_timeout:
 			dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size,
 					  cmd.base, cmd.phys_base);
 			IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
-			return -EFAULT;
+			return -EUCLEAN;
 		}
 		ep->uc_offload_state &= ~IPA_WDI_FW_SETUP;
 	}
@@ -2298,8 +2289,7 @@ uc_timeout:
 dma_alloc_fail:
 	memset(&ipa3_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa3_ep_context));
 	IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
-fail:
-	return result;
+	return result == -EUCLEAN ? -EFAULT : result;
 }
 
 int ipa3_disconnect_gsi_wdi_pipe(u32 clnt_hdl)
@@ -2357,7 +2347,6 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 {
 	struct ipa3_ep_context *ep;
 	union IpaHwWdiCommonChCmdData_t tear;
-	bool voted = false;
 	int result;
 
 	if (clnt_hdl >= ipa3_ctx->ipa_num_pipes ||
@@ -2372,23 +2361,23 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 	IPADBG("ep=%d\n", clnt_hdl);
 	ep = &ipa3_ctx->ep[clnt_hdl];
 
+	if (!(ep->uc_offload_state & IPA_WDI_TORN_DOWN)) {
+		result = ipa3_uc_state_check();
+		if (result)
+			return result;
+
+		if (ep->uc_offload_state != IPA_WDI_CONNECTED &&
+		    ep->uc_offload_state != IPA_WDI_FW_SETUP) {
+			IPAERR("WDI channel bad state %d\n",
+			       ep->uc_offload_state);
+			return -EFAULT;
+		}
+	}
+
+	IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
+
 	if (ep->uc_offload_state & IPA_WDI_TORN_DOWN)
 		goto release;
-
-	result = ipa3_uc_state_check();
-	if (result)
-		return result;
-
-	if (ep->uc_offload_state != IPA_WDI_CONNECTED &&
-	    ep->uc_offload_state != IPA_WDI_FW_SETUP) {
-		IPAERR("WDI channel bad state %d\n", ep->uc_offload_state);
-		return -EFAULT;
-	}
-
-	if (!ep->keep_ipa_awake) {
-		IPA_ACTIVE_CLIENTS_INC_EP(ipa3_get_client_mapping(clnt_hdl));
-		voted = true;
-	}
 
 	tear.params.ipa_pipe_number = clnt_hdl;
 	result = ipa3_uc_send_cmd(tear.raw32b,
@@ -2406,11 +2395,14 @@ int ipa3_disconnect_wdi_pipe(u32 clnt_hdl)
 	ep->uc_offload_state |= IPA_WDI_TORN_DOWN;
 
 release:
-	result = ipa_release_uc_smmu_mappings(ep->client);
+	result = ipa_release_uc_smmu_mappings(ipa3_get_client_mapping(clnt_hdl));
 	if (result) {
 		IPAERR("uC mapping release incomplete: %d\n", result);
 		goto uc_timeout;
 	}
+
+	if (ep->keep_ipa_awake)
+		IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
 
 	memset(&ipa3_ctx->ep[clnt_hdl], 0, sizeof(struct ipa3_ep_context));
 	IPADBG("client (ep: %d) disconnected\n", clnt_hdl);
@@ -2422,8 +2414,7 @@ release:
 		IPADBG("uc_wdi_ctx.stats_notify already null\n");
 
 uc_timeout:
-	if (voted)
-		IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
+	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
 	return result;
 }
 
@@ -2722,7 +2713,6 @@ int ipa3_disable_wdi_pipe(u32 clnt_hdl)
 	}
 	ep->uc_offload_state &= ~IPA_WDI_ENABLED;
 	IPADBG("client (ep: %d) disabled\n", clnt_hdl);
-	ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain());
 
 uc_timeout:
 	IPA_ACTIVE_CLIENTS_DEC_EP(ipa3_get_client_mapping(clnt_hdl));
@@ -3386,15 +3376,10 @@ int ipa3_wdi_pg_init(void)
 
 	mutex_lock(&ipa3_wdi_pg_mutex);
 	if (ipa3_wdi_pg.pool) {
-		if (ipa3_wdi_pg_outstanding() &&
-		    (ipa3_wdi_pg_retry_failed(ipa3_get_wlan_smmu_domain()) ||
-		     ipa3_wdi_pg_outstanding())) {
+		if (ipa3_wdi_pg_outstanding()) {
 			mutex_unlock(&ipa3_wdi_pg_mutex);
 			return -EBUSY;
 		}
-		spin_lock_irqsave(&ipa3_wdi_pg.lock, flags);
-		ipa3_wdi_pg_free_list();
-		spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
 		mutex_unlock(&ipa3_wdi_pg_mutex);
 		return 0;
 	}
@@ -3559,33 +3544,6 @@ next_try:
 	return -EAGAIN;
 }
 
-int ipa3_wdi_pg_retry_failed(struct iommu_domain *domain)
-{
-	struct ipa3_wdi_pg *pg;
-	unsigned long flags, iova;
-	phys_addr_t pa;
-	u32 i;
-
-	if (!ipa3_wdi_pg_supported() || !domain ||
-	    !READ_ONCE(ipa3_wdi_pg.pool))
-		return 0;
-
-	for (i = 0; i < IPA_WDI_PG_MAX; i++) {
-		spin_lock_irqsave(&ipa3_wdi_pg.lock, flags);
-		pg = &ipa3_wdi_pg.pool[i];
-		if (pg->state != IPA_WDI_PG_FAILED) {
-			spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
-			continue;
-		}
-		iova = pg->iova;
-		pa = pg->pa;
-		spin_unlock_irqrestore(&ipa3_wdi_pg.lock, flags);
-
-		ipa3_wdi_pg_put(domain, iova, pa);
-	}
-
-	return ipa3_wdi_pg_outstanding() ? 1 : 0;
-}
 int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 {
 	struct ipa_smmu_cb_ctx *cb = ipa3_get_smmu_ctx(IPA_SMMU_CB_WLAN);
@@ -3746,9 +3704,6 @@ int ipa3_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 		if (ret && (!first_ret || first_ret == -ENOENT))
 			first_ret = ret;
 	}
-
-	if (first_ret == -ENOENT)
-		first_ret = 0;
 
 	return first_ret;
 }

@@ -62,7 +62,6 @@ struct ipa_wdi_context {
 	u32 ipa_pm_hdl;
 	u8 sys_pipes_owned;
 	u8 sys_pipe_teardown_idx;
-	u8 wdi_pipes_owned;
 	u8 tx_pipe_owned;
 	u8 rx_pipe_owned;
 	u8 rm_dep_owned;
@@ -140,6 +139,18 @@ int ipa_wdi_init(struct ipa_wdi_init_in_params *in,
 }
 EXPORT_SYMBOL(ipa_wdi_init);
 
+static bool ipa_wdi_resources_owned(void)
+{
+	return ipa_wdi_ctx &&
+		(ipa_wdi_ctx->sys_pipes_owned ||
+		 ipa_wdi_ctx->tx_pipe_owned ||
+		 ipa_wdi_ctx->rx_pipe_owned ||
+		 ipa_wdi_ctx->rm_dep_owned ||
+		 ipa_wdi_ctx->rm_prod_owned ||
+		 ipa_wdi_ctx->rm_cons_owned ||
+		 ipa_wdi_ctx->pm_owned);
+}
+
 int ipa_wdi_cleanup(void)
 {
 	struct ipa_wdi_intf_info *entry;
@@ -150,14 +161,8 @@ int ipa_wdi_cleanup(void)
 		return -EPERM;
 	}
 
-	if (ipa_wdi_ctx->sys_pipes_owned ||
-	    ipa_wdi_ctx->wdi_pipes_owned ||
-	    ipa_wdi_ctx->tx_pipe_owned ||
-	    ipa_wdi_ctx->rx_pipe_owned ||
-	    ipa_wdi_ctx->rm_dep_owned ||
-	    ipa_wdi_ctx->rm_prod_owned ||
-	    ipa_wdi_ctx->rm_cons_owned ||
-	    ipa_wdi_ctx->pm_owned) {
+	if (ipa_wdi_ctx->wdi_version != IPA_WDI_3 &&
+	    ipa_wdi_resources_owned()) {
 		IPA_WDI_ERR("wdi resources are still owned\n");
 		return -EBUSY;
 	}
@@ -496,7 +501,7 @@ static void ipa_wdi_pm_cb(void *p, enum ipa_pm_cb_event event)
 int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 			struct ipa_wdi_conn_out_params *out)
 {
-	int i, ret = 0;
+	int i, j, ret = 0;
 	struct ipa_rm_create_params param;
 	struct ipa_pm_register_params pm_params;
 	struct ipa_wdi_in_params in_tx;
@@ -514,6 +519,12 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		return -EPERM;
 	}
 
+	if (ipa_wdi_ctx->wdi_version != IPA_WDI_3 &&
+	    ipa_wdi_resources_owned()) {
+		IPA_WDI_ERR("wdi resources are already owned\n");
+		return -EBUSY;
+	}
+
 	if (in->num_sys_pipe_needed > IPA_WDI_MAX_SUPPORTED_SYS_PIPE) {
 		IPA_WDI_ERR("ipa can only support up to %d sys pipe\n",
 			IPA_WDI_MAX_SUPPORTED_SYS_PIPE);
@@ -529,9 +540,12 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		if (ret) {
 			IPA_WDI_ERR("fail to setup sys pipe %d\n", i);
 			ret = -EFAULT;
+			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
+				goto fail_setup_sys_pipe;
 			goto fail_cleanup;
 		}
-		ipa_wdi_ctx->sys_pipes_owned = i + 1;
+		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)
+			ipa_wdi_ctx->sys_pipes_owned = i + 1;
 	}
 
 	if (!ipa_pm_is_used()) {
@@ -544,9 +558,12 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		if (ret) {
 			IPA_WDI_ERR("fail to create WLAN_PROD resource\n");
 			ret = -EFAULT;
+			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
+				goto fail_setup_sys_pipe;
 			goto fail_cleanup;
 		}
-		ipa_wdi_ctx->rm_prod_owned = 1;
+		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)
+			ipa_wdi_ctx->rm_prod_owned = 1;
 
 		memset(&param, 0, sizeof(param));
 		param.name = IPA_RM_RESOURCE_WLAN_CONS;
@@ -555,17 +572,23 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		ret = ipa_rm_create_resource(&param);
 		if (ret) {
 			IPA_WDI_ERR("fail to create WLAN_CONS resource\n");
+			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
+				goto fail_create_rm_cons;
 			goto fail_cleanup;
 		}
-		ipa_wdi_ctx->rm_cons_owned = 1;
+		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)
+			ipa_wdi_ctx->rm_cons_owned = 1;
 
 		if (ipa_rm_add_dependency(IPA_RM_RESOURCE_WLAN_PROD,
 			IPA_RM_RESOURCE_APPS_CONS)) {
 			IPA_WDI_ERR("fail to add rm dependency\n");
 			ret = -EFAULT;
+			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
+				goto fail_add_dependency;
 			goto fail_cleanup;
 		}
-		ipa_wdi_ctx->rm_dep_owned = 1;
+		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)
+			ipa_wdi_ctx->rm_dep_owned = 1;
 	} else {
 		memset(&pm_params, 0, sizeof(pm_params));
 		pm_params.name = "wdi";
@@ -575,18 +598,20 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 		if (ipa_pm_register(&pm_params, &ipa_wdi_ctx->ipa_pm_hdl)) {
 			IPA_WDI_ERR("fail to register ipa pm\n");
 			ret = -EFAULT;
+			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
+				goto fail_connect_pipe;
 			goto fail_cleanup;
 		}
-		ipa_wdi_ctx->pm_owned = 1;
+		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)
+			ipa_wdi_ctx->pm_owned = 1;
 	}
 
 	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3) {
 		if (ipa_conn_wdi_pipes(in, out, ipa_wdi_ctx->wdi_notify)) {
 			IPA_WDI_ERR("fail to setup wdi pipes\n");
 			ret = -EFAULT;
-			goto fail_cleanup;
+			goto fail_connect_pipe;
 		}
-		ipa_wdi_ctx->wdi_pipes_owned = 1;
 	} else {
 		memset(&in_tx, 0, sizeof(in_tx));
 		memset(&in_rx, 0, sizeof(in_rx));
@@ -726,6 +751,23 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 
 	return 0;
 
+fail_connect_pipe:
+	if (!ipa_pm_is_used())
+		ipa_rm_delete_dependency(IPA_RM_RESOURCE_WLAN_PROD,
+			IPA_RM_RESOURCE_APPS_CONS);
+	else
+		ipa_pm_deregister(ipa_wdi_ctx->ipa_pm_hdl);
+fail_add_dependency:
+	if (!ipa_pm_is_used())
+		ipa_rm_delete_resource(IPA_RM_RESOURCE_WLAN_CONS);
+fail_create_rm_cons:
+	if (!ipa_pm_is_used())
+		ipa_rm_delete_resource(IPA_RM_RESOURCE_WLAN_PROD);
+fail_setup_sys_pipe:
+	for (j = 0; j < i; j++)
+		ipa_teardown_sys_pipe(ipa_wdi_ctx->sys_pipe_hdl[j]);
+	return ret;
+
 fail_cleanup:
 	if (ipa_wdi_disconn_pipes())
 		IPA_WDI_ERR("fail to release partial WDI setup\n");
@@ -735,26 +777,39 @@ EXPORT_SYMBOL(ipa_wdi_conn_pipes);
 
 int ipa_wdi_disconn_pipes(void)
 {
-	int ipa_ep_idx_rx, ipa_ep_idx_tx;
+	int i, ipa_ep_idx_rx, ipa_ep_idx_tx;
 
 	if (!ipa_wdi_ctx) {
 		IPA_WDI_ERR("wdi ctx is not initialized\n");
 		return -EPERM;
 	}
 
-	/* tear down sys pipes this context previously set up */
-	while (ipa_wdi_ctx->sys_pipe_teardown_idx <
-	       ipa_wdi_ctx->sys_pipes_owned) {
-		int i = ipa_wdi_ctx->sys_pipe_teardown_idx;
-
-		if (ipa_teardown_sys_pipe(ipa_wdi_ctx->sys_pipe_hdl[i])) {
-			IPA_WDI_ERR("fail to tear down sys pipe %d\n", i);
-			return -EFAULT;
+	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3) {
+		for (i = 0; i < ipa_wdi_ctx->num_sys_pipe_needed; i++) {
+			if (ipa_teardown_sys_pipe(
+					ipa_wdi_ctx->sys_pipe_hdl[i])) {
+				IPA_WDI_ERR("fail to tear down sys pipe %d\n",
+					    i);
+				return -EFAULT;
+			}
 		}
-		ipa_wdi_ctx->sys_pipe_teardown_idx++;
+	} else {
+		/* tear down sys pipes this context previously set up */
+		while (ipa_wdi_ctx->sys_pipe_teardown_idx <
+		       ipa_wdi_ctx->sys_pipes_owned) {
+			i = ipa_wdi_ctx->sys_pipe_teardown_idx;
+
+			if (ipa_teardown_sys_pipe(
+					ipa_wdi_ctx->sys_pipe_hdl[i])) {
+				IPA_WDI_ERR("fail to tear down sys pipe %d\n",
+					    i);
+				return -EFAULT;
+			}
+			ipa_wdi_ctx->sys_pipe_teardown_idx++;
+		}
+		ipa_wdi_ctx->sys_pipes_owned = 0;
+		ipa_wdi_ctx->sys_pipe_teardown_idx = 0;
 	}
-	ipa_wdi_ctx->sys_pipes_owned = 0;
-	ipa_wdi_ctx->sys_pipe_teardown_idx = 0;
 
 #ifdef CONFIG_IPA3
 	if (!ipa3_ctx->ipa_wdi3_over_gsi) {
@@ -770,12 +825,10 @@ int ipa_wdi_disconn_pipes(void)
 #endif
 
 	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3) {
-		if (ipa_wdi_ctx->wdi_pipes_owned &&
-		    ipa_disconn_wdi_pipes(ipa_ep_idx_rx, ipa_ep_idx_tx)) {
+		if (ipa_disconn_wdi_pipes(ipa_ep_idx_rx, ipa_ep_idx_tx)) {
 			IPA_WDI_ERR("fail to tear down wdi pipes\n");
 			return -EFAULT;
 		}
-		ipa_wdi_ctx->wdi_pipes_owned = 0;
 	} else {
 		if (ipa_wdi_ctx->tx_pipe_owned) {
 			if (ipa_disconnect_wdi_pipe(
@@ -795,6 +848,31 @@ int ipa_wdi_disconn_pipes(void)
 			ipa_wdi_ctx->rx_pipe_owned = 0;
 			ipa_wdi_ctx->rx_pipe_hdl = 0;
 		}
+	}
+
+	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3) {
+		if (!ipa_pm_is_used()) {
+			if (ipa_rm_delete_dependency(
+					IPA_RM_RESOURCE_WLAN_PROD,
+					IPA_RM_RESOURCE_APPS_CONS)) {
+				IPA_WDI_ERR("fail to delete rm dependency\n");
+				return -EFAULT;
+			}
+			if (ipa_rm_delete_resource(
+					IPA_RM_RESOURCE_WLAN_PROD)) {
+				IPA_WDI_ERR("fail to delete WLAN_PROD resource\n");
+				return -EFAULT;
+			}
+			if (ipa_rm_delete_resource(
+					IPA_RM_RESOURCE_WLAN_CONS)) {
+				IPA_WDI_ERR("fail to delete WLAN_CONS resource\n");
+				return -EFAULT;
+			}
+		} else if (ipa_pm_deregister(ipa_wdi_ctx->ipa_pm_hdl)) {
+			IPA_WDI_ERR("fail to deregister ipa pm\n");
+			return -EFAULT;
+		}
+		return 0;
 	}
 
 	if (ipa_wdi_ctx->rm_dep_owned) {

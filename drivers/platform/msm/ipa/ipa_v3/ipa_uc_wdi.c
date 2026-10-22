@@ -3641,8 +3641,6 @@ int ipa3_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info)
 					rounddown(info[i].pa, PAGE_SIZE),
 					PAGE_SIZE),
 				prot);
-			if (info[i].result && !ret)
-				ret = info[i].result;
 		}
 
 		return ret;

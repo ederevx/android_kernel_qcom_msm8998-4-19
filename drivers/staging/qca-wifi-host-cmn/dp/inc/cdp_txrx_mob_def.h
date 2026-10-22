@@ -314,6 +314,18 @@ struct txrx_pdev_cfg_param_t {
 
 #ifdef IPA_OFFLOAD
 /**
+ * enum ol_txrx_ipa_pipe_state - Hardware state of one legacy IPA WDI pipe
+ * @OL_TXRX_IPA_PIPE_DISABLED: connected to IPA, hardware disabled
+ * @OL_TXRX_IPA_PIPE_SUSPENDED: hardware enabled, pipe suspended
+ * @OL_TXRX_IPA_PIPE_ACTIVE: hardware enabled and running
+ */
+enum ol_txrx_ipa_pipe_state {
+	OL_TXRX_IPA_PIPE_DISABLED,
+	OL_TXRX_IPA_PIPE_SUSPENDED,
+	OL_TXRX_IPA_PIPE_ACTIVE,
+};
+
+/**
  * ol_txrx_ipa_resources - Resources needed for IPA
  */
 struct ol_txrx_ipa_resources {
@@ -340,6 +352,13 @@ struct ol_txrx_ipa_resources {
 	/* WLAN-owned doorbell mappings */
 	bool tx_comp_doorbell_mapped;
 	bool rx_ready_doorbell_mapped;
+
+	/* Unified-API hardware disable progress */
+	bool pipes_disabled;
+
+	/* Legacy per-pipe hardware state */
+	enum ol_txrx_ipa_pipe_state tx_state;
+	enum ol_txrx_ipa_pipe_state rx_state;
 };
 #endif
 

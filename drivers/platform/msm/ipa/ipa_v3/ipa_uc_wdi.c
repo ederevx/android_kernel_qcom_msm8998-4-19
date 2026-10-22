@@ -2306,8 +2306,9 @@ int ipa3_connect_wdi_pipe(struct ipa_wdi_in_params *in,
 	if (!ep->skip_ep_cfg && IPA_CLIENT_IS_PROD(in->sys.client))
 		ipa3_install_dflt_flt_rules(ipa_ep_idx);
 
-	if (!ep->keep_ipa_awake)
+	if (!ep->keep_ipa_awake) {
 		IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+	}
 
 	dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base, cmd.phys_base);
 	ep->uc_offload_state = IPA_WDI_CONNECTED;
@@ -2326,7 +2327,9 @@ uc_timeout:
 			out->clnt_hdl = ipa_ep_idx;
 			dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size,
 					  cmd.base, cmd.phys_base);
-			IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+			if (!ep->keep_ipa_awake) {
+				IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+			}
 			return -EUCLEAN;
 		}
 		ep->uc_offload_state &= ~IPA_WDI_FW_SETUP;
@@ -2338,7 +2341,9 @@ uc_timeout:
 		out->clnt_hdl = ipa_ep_idx;
 		dma_free_coherent(ipa3_ctx->uc_pdev, cmd.size, cmd.base,
 				  cmd.phys_base);
-		IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+		if (!ep->keep_ipa_awake) {
+			IPA_ACTIVE_CLIENTS_DEC_EP(in->sys.client);
+		}
 		return -EUCLEAN;
 	}
 	memset(&ipa3_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa3_ep_context));

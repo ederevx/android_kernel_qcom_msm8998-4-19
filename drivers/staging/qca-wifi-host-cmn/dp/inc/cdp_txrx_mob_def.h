@@ -336,6 +336,10 @@ struct ol_txrx_ipa_resources {
 
 	uint32_t tx_pipe_handle;
 	uint32_t rx_pipe_handle;
+
+	/* WLAN-owned doorbell mappings */
+	bool tx_comp_doorbell_mapped;
+	bool rx_ready_doorbell_mapped;
 };
 #endif
 

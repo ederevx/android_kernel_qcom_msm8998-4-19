@@ -319,7 +319,10 @@ QDF_STATUS cds_close(struct wlan_objmgr_psoc *psoc);
  * @psoc: Object manager soc handle
  *
  * API used to detach interrupts assigned to service
- * datapath rings and close pdev module
+ * datapath rings and close pdev module.
+ *
+ * Must only follow a successful cds_dp_pre_close(): the pdev detach frees
+ * buffers whose IPA mappings only the pre-close drains.
  *
  * Return: Status
  */

@@ -3475,6 +3475,8 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 	qdf_device_t qdf_dev;
 	QDF_STATUS status;
 	bool unint = false;
+	bool sysfs_created = false;
+	bool notifiers_registered = false;
 	void *hif_ctx;
 	struct target_psoc_info *tgt_hdl;
 
@@ -3630,6 +3632,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 		ret = hdd_register_notifiers(hdd_ctx);
 		if (ret)
 			goto cds_txrx_free;
+		notifiers_registered = true;
 
 		/*
 		 * NAN compoenet requires certian operations like, open adapter,
@@ -3651,6 +3654,7 @@ int hdd_wlan_start_modules(struct hdd_context *hdd_ctx, bool reinit)
 		hdd_spectral_register_to_dbr(hdd_ctx);
 
 		hdd_create_sysfs_files(hdd_ctx);
+		sysfs_created = true;
 		hdd_update_hw_sw_info(hdd_ctx);
 
 		if (QDF_GLOBAL_FTM_MODE == hdd_get_conparam()) {
@@ -3708,8 +3712,10 @@ cds_txrx_free:
 		      status);
 	}
 
-	hdd_destroy_sysfs_files();
-	hdd_unregister_notifiers(hdd_ctx);
+	if (sysfs_created)
+		hdd_destroy_sysfs_files();
+	if (notifiers_registered)
+		hdd_unregister_notifiers(hdd_ctx);
 	hdd_deregister_cb(hdd_ctx);
 
 	tgt_hdl = wlan_psoc_get_tgt_if_handle(hdd_ctx->psoc);

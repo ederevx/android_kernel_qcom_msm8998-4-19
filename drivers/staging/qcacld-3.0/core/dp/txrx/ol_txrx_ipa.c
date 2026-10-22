@@ -313,6 +313,44 @@ QDF_STATUS ol_txrx_ipa_set_smmu_params(struct cdp_pdev *ppdev,
 	return QDF_STATUS_SUCCESS;
 }
 
+static QDF_STATUS
+ol_txrx_ipa_unmap_doorbells(struct ol_txrx_ipa_resources *ipa_res,
+			    qdf_device_t osdev)
+{
+	int ret;
+
+	if (!osdev)
+		return ipa_res->tx_comp_doorbell_mapped ||
+			ipa_res->rx_ready_doorbell_mapped ?
+			QDF_STATUS_E_FAILURE : QDF_STATUS_SUCCESS;
+
+	if (ipa_res->tx_comp_doorbell_mapped) {
+		ret = pld_smmu_unmap(osdev->dev,
+				     ipa_res->tx_comp_doorbell_dmaaddr,
+				     sizeof(uint32_t));
+		if (ret) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+				  "IPA TX doorbell unmap failed: %d", ret);
+			return QDF_STATUS_E_FAILURE;
+		}
+		ipa_res->tx_comp_doorbell_mapped = false;
+	}
+
+	if (ipa_res->rx_ready_doorbell_mapped) {
+		ret = pld_smmu_unmap(osdev->dev,
+				     ipa_res->rx_ready_doorbell_dmaaddr,
+				     sizeof(uint32_t));
+		if (ret) {
+			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+				  "IPA RX doorbell unmap failed: %d", ret);
+			return QDF_STATUS_E_FAILURE;
+		}
+		ipa_res->rx_ready_doorbell_mapped = false;
+	}
+
+	return QDF_STATUS_SUCCESS;
+}
+
 #ifdef CONFIG_IPA_WDI_UNIFIED_API
 
 #ifndef QCA_LL_TX_FLOW_CONTROL_V2
@@ -618,13 +656,19 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		QDF_IPA_WDI_CONN_OUT_PARAMS_RX_UC_DB_PA(&pipe_out);
 
 	if (qdf_mem_smmu_s1_enabled(osdev)) {
-		pld_smmu_map(osdev->dev, ipa_res->tx_comp_doorbell_dmaaddr,
-			     &tx_comp_db_dmaaddr, sizeof(uint32_t));
-		ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
+		if (!pld_smmu_map(osdev->dev,
+				  ipa_res->tx_comp_doorbell_dmaaddr,
+				  &tx_comp_db_dmaaddr, sizeof(uint32_t))) {
+			ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
+			ipa_res->tx_comp_doorbell_mapped = true;
+		}
 
-		pld_smmu_map(osdev->dev, ipa_res->rx_ready_doorbell_dmaaddr,
-			     &rx_rdy_db_dmaaddr, sizeof(uint32_t));
-		ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
+		if (!pld_smmu_map(osdev->dev,
+				  ipa_res->rx_ready_doorbell_dmaaddr,
+				  &rx_rdy_db_dmaaddr, sizeof(uint32_t))) {
+			ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
+			ipa_res->rx_ready_doorbell_mapped = true;
+		}
 	}
 
 	qdf_mem_free(pipe_in);
@@ -638,42 +682,29 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
  *
  * Return: QDF_STATUS
  */
-static bool ipa_tx_disconnected;
-static bool ipa_rx_disconnected;
-
 QDF_STATUS ol_txrx_ipa_cleanup(uint32_t tx_pipe_handle, uint32_t rx_pipe_handle)
 {
-	int ret = 0;
+	ol_txrx_pdev_handle pdev;
+	struct ol_txrx_ipa_resources *ipa_res;
+	qdf_device_t osdev;
+	int ret;
 
-	if (!ipa_tx_disconnected) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Disconnect TX PIPE tx_pipe_handle=0x%x",
-			  __func__, tx_pipe_handle);
-		ret = qdf_ipa_disconnect_wdi_pipe(tx_pipe_handle);
-		if (ret) {
-			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				  "Tx pipe cleanup failed: ret=%d", ret);
-			return QDF_STATUS_E_FAILURE;
-		}
-		ipa_tx_disconnected = true;
+	pdev = cds_get_context(QDF_MODULE_ID_TXRX);
+	if (!pdev)
+		return QDF_STATUS_E_INVAL;
+	ipa_res = &pdev->ipa_resource;
+
+	QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
+		  "%s: Disconnect IPA pipes", __func__);
+	ret = qdf_ipa_wdi_disconn_pipes();
+	if (ret) {
+		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
+			  "IPA pipe cleanup failed: ret=%d", ret);
+		return QDF_STATUS_E_FAILURE;
 	}
 
-	if (!ipa_rx_disconnected) {
-		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_DEBUG,
-			  "%s: Disconnect RX PIPE rx_pipe_handle=0x%x",
-			  __func__, rx_pipe_handle);
-		ret = qdf_ipa_disconnect_wdi_pipe(rx_pipe_handle);
-		if (ret) {
-			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
-				  "Rx pipe cleanup failed: ret=%d", ret);
-			return QDF_STATUS_E_FAILURE;
-		}
-		ipa_rx_disconnected = true;
-	}
-
-	ipa_tx_disconnected = false;
-	ipa_rx_disconnected = false;
-	return QDF_STATUS_SUCCESS;
+	osdev = cds_get_context(QDF_MODULE_ID_QDF_DEVICE);
+	return ol_txrx_ipa_unmap_doorbells(ipa_res, osdev);
 }
 
 /**

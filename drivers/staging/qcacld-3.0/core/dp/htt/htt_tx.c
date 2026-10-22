@@ -1277,9 +1277,6 @@ static int htt_tx_ipa_uc_wdi_tx_buf_alloc(struct htt_pdev_t *pdev,
 
 	pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt = tx_buffer_count_pwr2;
 
-	if (tx_buffer_count < (uc_tx_buf_cnt - 1))
-		return -ENOMEM;
-
 	for (idx = 0; idx < tx_buffer_count_pwr2; idx++) {
 		ret = htt_tx_ipa_uc_map_buffer(pdev, idx);
 		if (ret)
@@ -1376,9 +1373,6 @@ static int htt_tx_ipa_uc_wdi_tx_buf_alloc(struct htt_pdev_t *pdev,
 	}
 
 	pdev->ipa_uc_tx_rsc.alloc_tx_buf_cnt = tx_buffer_count_pwr2;
-
-	if (tx_buffer_count < (uc_tx_buf_cnt - 1))
-		return -ENOMEM;
 
 	for (idx = 0; idx < tx_buffer_count_pwr2; idx++) {
 		ret = htt_tx_ipa_uc_map_buffer(pdev, idx);

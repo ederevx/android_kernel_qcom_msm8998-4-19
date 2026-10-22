@@ -353,6 +353,10 @@ struct ol_txrx_ipa_resources {
 	bool tx_comp_doorbell_mapped;
 	bool rx_ready_doorbell_mapped;
 
+	/* Legacy per-pipe connection ownership */
+	bool tx_connected;
+	bool rx_connected;
+
 	/* Unified-API hardware disable progress */
 	bool pipes_disabled;
 

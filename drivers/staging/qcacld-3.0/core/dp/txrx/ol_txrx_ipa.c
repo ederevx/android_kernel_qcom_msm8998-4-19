@@ -661,8 +661,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &tx_comp_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA TX doorbell map failed");
-			qdf_mem_free(pipe_in);
-			return QDF_STATUS_E_FAILURE;
+			goto doorbell_map_fail;
 		}
 		ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
 		ipa_res->tx_comp_doorbell_mapped = true;
@@ -672,8 +671,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &rx_rdy_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA RX doorbell map failed");
-			qdf_mem_free(pipe_in);
-			return QDF_STATUS_E_FAILURE;
+			goto doorbell_map_fail;
 		}
 		ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
 		ipa_res->rx_ready_doorbell_mapped = true;
@@ -681,6 +679,11 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 
 	qdf_mem_free(pipe_in);
 	return QDF_STATUS_SUCCESS;
+
+doorbell_map_fail:
+	qdf_mem_free(pipe_in);
+	ol_txrx_ipa_cleanup(*p_tx_pipe_handle, *p_rx_pipe_handle);
+	return QDF_STATUS_E_FAILURE;
 }
 
 /**
@@ -1118,10 +1121,16 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 
 	/* Connect WDI IPA PIPE */
 	ret = qdf_ipa_connect_wdi_pipe(&pipe_in, &pipe_out);
+	if (!ret || ret == -EUCLEAN) {
+		ipa_res->tx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
+		ipa_res->tx_connected = true;
+		ipa_res->tx_state = OL_TXRX_IPA_PIPE_DISABLED;
+		*p_tx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
+	}
 	if (ret) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 		    "ipa_connect_wdi_pipe: Tx pipe setup failed: ret=%d", ret);
-		return QDF_STATUS_E_FAILURE;
+		goto fail_cleanup;
 	}
 
 	/* Micro Controller Doorbell register */
@@ -1131,10 +1140,6 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 		pipe_out.clnt_hdl);
 	ipa_res->tx_comp_doorbell_dmaaddr =
 		QDF_IPA_PIPE_OUT_UC_DOOR_BELL_PA(&pipe_out);
-	/* WLAN TX PIPE Handle */
-	ipa_res->tx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
-	ipa_res->tx_connected = true;
-	*p_tx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
 
 	/* RX PIPE */
 	QDF_IPA_PIPE_IN_NAT_EN(&pipe_in) = IPA_BYPASS_NAT;
@@ -1162,16 +1167,19 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 #endif
 
 	ret = qdf_ipa_connect_wdi_pipe(&pipe_in, &pipe_out);
+	if (!ret || ret == -EUCLEAN) {
+		ipa_res->rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
+		ipa_res->rx_connected = true;
+		ipa_res->rx_state = OL_TXRX_IPA_PIPE_DISABLED;
+		*p_rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
+	}
 	if (ret) {
 		QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 		    "ipa_connect_wdi_pipe: Rx pipe setup failed: ret=%d", ret);
-		return QDF_STATUS_E_FAILURE;
+		goto fail_cleanup;
 	}
 	ipa_res->rx_ready_doorbell_dmaaddr =
 		QDF_IPA_PIPE_OUT_UC_DOOR_BELL_PA(&pipe_out);
-	ipa_res->rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
-	ipa_res->rx_connected = true;
-	*p_rx_pipe_handle = QDF_IPA_PIPE_OUT_CLNT_HDL(&pipe_out);
 
 	if (qdf_mem_smmu_s1_enabled(osdev)) {
 		if (pld_smmu_map(osdev->dev,
@@ -1179,7 +1187,7 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &tx_comp_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA TX doorbell map failed");
-			return QDF_STATUS_E_FAILURE;
+			goto fail_cleanup;
 		}
 		ipa_res->tx_comp_doorbell_dmaaddr = tx_comp_db_dmaaddr;
 		ipa_res->tx_comp_doorbell_mapped = true;
@@ -1189,13 +1197,18 @@ QDF_STATUS ol_txrx_ipa_setup(struct cdp_pdev *ppdev, void *ipa_i2w_cb,
 				 &rx_rdy_db_dmaaddr, sizeof(uint32_t))) {
 			QDF_TRACE(QDF_MODULE_ID_TXRX, QDF_TRACE_LEVEL_ERROR,
 				  "IPA RX doorbell map failed");
-			return QDF_STATUS_E_FAILURE;
+			goto fail_cleanup;
 		}
 		ipa_res->rx_ready_doorbell_dmaaddr = rx_rdy_db_dmaaddr;
 		ipa_res->rx_ready_doorbell_mapped = true;
 	}
 
 	return QDF_STATUS_SUCCESS;
+
+fail_cleanup:
+	ol_txrx_ipa_cleanup(ipa_res->tx_pipe_handle,
+			    ipa_res->rx_pipe_handle);
+	return QDF_STATUS_E_FAILURE;
 }
 
 /**

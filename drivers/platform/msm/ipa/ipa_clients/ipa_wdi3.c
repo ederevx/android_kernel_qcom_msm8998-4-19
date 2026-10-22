@@ -769,9 +769,9 @@ int ipa_wdi_disconn_pipes(void)
 		ipa_ep_idx_tx = ipa_get_ep_mapping(IPA_CLIENT_WLAN1_CONS);
 #endif
 
-	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3 &&
-	    ipa_wdi_ctx->wdi_pipes_owned) {
-		if (ipa_disconn_wdi_pipes(ipa_ep_idx_rx, ipa_ep_idx_tx)) {
+	if (ipa_wdi_ctx->wdi_version == IPA_WDI_3) {
+		if (ipa_wdi_ctx->wdi_pipes_owned &&
+		    ipa_disconn_wdi_pipes(ipa_ep_idx_rx, ipa_ep_idx_tx)) {
 			IPA_WDI_ERR("fail to tear down wdi pipes\n");
 			return -EFAULT;
 		}

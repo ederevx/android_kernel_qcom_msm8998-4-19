@@ -556,12 +556,19 @@ int htt_rx_attach(struct htt_pdev_t *pdev);
 
 #if defined(CONFIG_HL_SUPPORT)
 
-static inline void htt_rx_detach(struct htt_pdev_t *pdev)
+static inline int htt_rx_wdi_drain_mappings(struct htt_pdev_t *pdev)
 {
+	return 0;
+}
+
+static inline int htt_rx_detach(struct htt_pdev_t *pdev)
+{
+	return 0;
 }
 #else
 
-void htt_rx_detach(struct htt_pdev_t *pdev);
+int htt_rx_wdi_drain_mappings(struct htt_pdev_t *pdev);
+int htt_rx_detach(struct htt_pdev_t *pdev);
 #endif
 
 int htt_htc_attach(struct htt_pdev_t *pdev, uint16_t service_id);
@@ -618,21 +625,30 @@ void htt_htc_misc_pkt_pool_free(struct htt_pdev_t *pdev);
 int
 htt_rx_hash_list_insert(struct htt_pdev_t *pdev,
 			qdf_dma_addr_t paddr,
-			qdf_nbuf_t netbuf);
+			qdf_nbuf_t netbuf,
+			struct htt_rx_wdi_owner *owner);
 #else
 static inline int
 htt_rx_hash_list_insert(struct htt_pdev_t *pdev,
 			qdf_dma_addr_t paddr,
-			qdf_nbuf_t netbuf)
+			qdf_nbuf_t netbuf,
+			struct htt_rx_wdi_owner *owner)
 {
 	return 0;
 }
 #endif
 
 qdf_nbuf_t
-htt_rx_hash_list_lookup(struct htt_pdev_t *pdev, qdf_dma_addr_t paddr);
+htt_rx_hash_list_lookup(struct htt_pdev_t *pdev, qdf_dma_addr_t paddr,
+			bool *found);
 
 #ifdef IPA_OFFLOAD
+int htt_ipa_uc_smmu_page(struct htt_pdev_t *pdev, phys_addr_t pa,
+			 unsigned long iova, bool map);
+
+int htt_ipa_uc_drain_mappings(struct htt_pdev_t *pdev);
+int htt_tx_ipa_uc_drain_mappings(struct htt_pdev_t *pdev);
+
 int
 htt_tx_ipa_uc_attach(struct htt_pdev_t *pdev,
 		     unsigned int uc_tx_buf_sz,
@@ -679,6 +695,22 @@ htt_rx_ipa_uc_attach(struct htt_pdev_t *pdev, unsigned int rx_ind_ring_size)
 }
 
 static inline int htt_tx_ipa_uc_detach(struct htt_pdev_t *pdev)
+{
+	return 0;
+}
+
+static inline int htt_tx_ipa_uc_drain_mappings(struct htt_pdev_t *pdev)
+{
+	return 0;
+}
+
+static inline int htt_ipa_uc_smmu_page(struct htt_pdev_t *pdev, phys_addr_t pa,
+				       unsigned long iova, bool map)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int htt_ipa_uc_drain_mappings(struct htt_pdev_t *pdev)
 {
 	return 0;
 }
@@ -1089,12 +1121,13 @@ unsigned int htt_rx_in_order_ring_elems(struct htt_pdev_t *pdev)
 }
 
 static inline qdf_nbuf_t
-htt_rx_in_order_netbuf_pop(htt_pdev_handle pdev, qdf_dma_addr_t paddr)
+htt_rx_in_order_netbuf_pop(htt_pdev_handle pdev, qdf_dma_addr_t paddr,
+			   bool *found)
 {
 	HTT_ASSERT1(htt_rx_in_order_ring_elems(pdev) != 0);
 	pdev->rx_ring.fill_cnt--;
 	paddr = htt_paddr_trim_to_37(paddr);
-	return htt_rx_hash_list_lookup(pdev, paddr);
+	return htt_rx_hash_list_lookup(pdev, paddr, found);
 }
 
 #else
@@ -1105,8 +1138,10 @@ qdf_dma_addr_t htt_rx_in_ord_paddr_get(uint32_t *u32p)
 }
 
 static inline qdf_nbuf_t
-htt_rx_in_order_netbuf_pop(htt_pdev_handle pdev, qdf_dma_addr_t paddr)
+htt_rx_in_order_netbuf_pop(htt_pdev_handle pdev, qdf_dma_addr_t paddr,
+			   bool *found)
 {
+	*found = false;
 	return NULL;
 }
 #endif

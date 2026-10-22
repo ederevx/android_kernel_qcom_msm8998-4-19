@@ -599,7 +599,7 @@ int ipa_wdi_conn_pipes(struct ipa_wdi_conn_in_params *in,
 			IPA_WDI_ERR("fail to register ipa pm\n");
 			ret = -EFAULT;
 			if (ipa_wdi_ctx->wdi_version == IPA_WDI_3)
-				goto fail_connect_pipe;
+				goto fail_setup_sys_pipe;
 			goto fail_cleanup;
 		}
 		if (ipa_wdi_ctx->wdi_version != IPA_WDI_3)

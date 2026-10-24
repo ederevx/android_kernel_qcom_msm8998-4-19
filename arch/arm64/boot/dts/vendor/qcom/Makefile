@@ -1,3 +1,13 @@
+dtb-$(CONFIG_ARCH_ONEPLUS_MSM8998) += \
+	oneplus/cheeseburger-v2.1-backup.dtb \
+	oneplus/cheeseburger-v2.1-dvt1.dtb \
+	oneplus/cheeseburger-v2.1-pvt.dtb \
+	oneplus/cheeseburger-v2.1-pvt1.dtb \
+	oneplus/dumpling-v2.1-Second_Resource.dtb \
+	oneplus/dumpling-v2.1-backup.dtb \
+	oneplus/dumpling-v2.1-dvt.dtb \
+	oneplus/dumpling-v2.1-pvt.dtb
+
 ifeq ($(CONFIG_BUILD_ARM64_DT_OVERLAY),y)
         dtbo-$(CONFIG_ARCH_KONA) += \
                 kona-cdp-overlay.dtbo \

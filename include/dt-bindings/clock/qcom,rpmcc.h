@@ -242,5 +242,7 @@
 #define CXO_SMD_DWC3_CLK			190
 #define CXO_SMD_PIL_SSC_CLK			191
 #define CXO_SMD_PIL_SPSS_CLK			192
+#define UART_CNOC_MSMBUS_A_CLK			193
+#define UART_SNOC_MSMBUS_A_CLK			194
 
 #endif

@@ -25,6 +25,9 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+#include <linux/power/oem_external_fg.h>
+#endif
 
 #define PMIC_VER_8941				0x01
 #define PMIC_VERSION_REG			0x0105
@@ -2396,6 +2399,11 @@ static int qpnp_pon_probe(struct platform_device *pdev)
 		sys_reset_dev = pon;
 	if (modem_reset)
 		modem_reset_dev = pon;
+
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	if (to_spmi_device(dev->parent)->usid == 0)
+		op_pm8998_regmap_register(pon->regmap);
+#endif
 
 	qpnp_pon_debugfs_init(pon);
 

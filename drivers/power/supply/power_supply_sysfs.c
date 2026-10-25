@@ -485,6 +485,27 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(cc_toggle_enable),
 	POWER_SUPPLY_ATTR(fg_type),
 	POWER_SUPPLY_ATTR(charger_status),
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	POWER_SUPPLY_ATTR(set_allow_read_extern_fg_iic),
+	POWER_SUPPLY_ATTR(cc_to_cv_point),
+	POWER_SUPPLY_ATTR(chg_protect_status),
+	POWER_SUPPLY_ATTR(fastchg_status),
+	POWER_SUPPLY_ATTR(fastchg_starting),
+	POWER_SUPPLY_ATTR(update_lcd_is_off),
+	POWER_SUPPLY_ATTR(check_usb_unplug),
+	POWER_SUPPLY_ATTR(otg_switch),
+	POWER_SUPPLY_ATTR(switch_dash),
+	POWER_SUPPLY_ATTR(notify_charger_set_parameter),
+	POWER_SUPPLY_ATTR(fg_capacity),
+	POWER_SUPPLY_ATTR(fg_voltage_now),
+	POWER_SUPPLY_ATTR(fg_current_now),
+	POWER_SUPPLY_ATTR(is_aging_test),
+	POWER_SUPPLY_ATTR(bq_soc),
+	POWER_SUPPLY_ATTR(oem_cc_orientation),
+	POWER_SUPPLY_ATTR(battery_health),
+	POWER_SUPPLY_ATTR(remaining_capacity),
+	POWER_SUPPLY_ATTR(esr_sw_control),
+#endif
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_ATTR(charge_counter_ext),
 	/* Properties of type `const char *' */

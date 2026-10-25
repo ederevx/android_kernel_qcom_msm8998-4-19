@@ -220,13 +220,12 @@ static unsigned char dash_uart_rx_byte(
 
 static void dash_uart_irq_fiq_enable(bool enable)
 {
+	/* FIQ has no arm64 equivalent; only preempt/irq state applies here */
 	if (enable) {
 		preempt_enable();
-		local_fiq_enable();
 		local_irq_enable();
 	} else {
 		local_irq_disable();
-		local_fiq_disable();
 		preempt_disable();
 	}
 }

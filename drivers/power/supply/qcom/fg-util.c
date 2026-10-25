@@ -389,6 +389,11 @@ void fg_notify_charger(struct fg_dev *fg)
 	if (!fg->profile_available)
 		return;
 
+	if (fg->notify_charger) {
+		fg->notify_charger(fg);
+		return;
+	}
+
 	if (fg->bp.float_volt_uv > 0) {
 		prop.intval = fg->bp.float_volt_uv;
 		rc = power_supply_set_property(fg->batt_psy,

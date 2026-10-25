@@ -17,7 +17,9 @@
 #include <linux/qpnp/qpnp-misc.h>
 #include "fg-core.h"
 #include "fg-reg.h"
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
 #include <linux/power/oem_external_fg.h>
+#endif
 
 #define FG_GEN3_DEV_NAME	"qcom,fg-gen3"
 
@@ -168,6 +170,9 @@ struct fg_dt_props {
 	bool    use_esr_sw;
 	bool	disable_esr_pull_dn;
 	bool    disable_fg_twm;
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	bool	use_external_fg;
+#endif
 	int	cutoff_volt_mv;
 	int	empty_volt_mv;
 	int	vbatt_low_thr_mv;
@@ -237,7 +242,6 @@ struct fg_gen3_chip {
 	bool			ki_coeff_dischg_en;
 	bool			esr_fcc_ctrl_en;
 	bool			esr_flt_cold_temp_en;
-	bool                    use_external_fg;
 	bool			slope_limit_en;
 };
 
@@ -467,6 +471,117 @@ static struct fg_alg_flag pmi8998_v2_alg_flags[] = {
 
 static int fg_gen3_debug_mask;
 
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+static struct external_battery_gauge *external_fg;
+
+void external_battery_gauge_register(struct external_battery_gauge *batt_gauge)
+{
+	if (external_fg) {
+		external_fg = batt_gauge;
+		pr_err("qpnp-charger %s multiple battery gauge called\n",
+								__func__);
+	} else {
+		external_fg = batt_gauge;
+	}
+}
+EXPORT_SYMBOL(external_battery_gauge_register);
+
+static void oneplus_set_allow_read_iic(struct fg_gen3_chip *chip, bool status)
+{
+	if (chip->dt.use_external_fg && external_fg
+			&& external_fg->set_allow_reading)
+		external_fg->set_allow_reading(status);
+	else
+		pr_info("set allow read extern fg iic fail\n");
+}
+
+static void oneplus_set_lcd_off_status(struct fg_gen3_chip *chip, bool status)
+{
+	if (chip->dt.use_external_fg && external_fg
+			&& external_fg->set_lcd_off_status)
+		external_fg->set_lcd_off_status(status);
+	else
+		pr_info("set lcd off status fail\n");
+}
+
+void external_battery_gauge_unregister(
+	struct external_battery_gauge *batt_gauge)
+{
+	external_fg = NULL;
+}
+EXPORT_SYMBOL(external_battery_gauge_unregister);
+
+static int fg_gen3_op_set_property(struct fg_gen3_chip *chip,
+				   enum power_supply_property psp,
+				   const union power_supply_propval *pval)
+{
+	switch (psp) {
+	case POWER_SUPPLY_PROP_SET_ALLOW_READ_EXTERN_FG_IIC:
+		oneplus_set_allow_read_iic(chip, pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_UPDATE_LCD_IS_OFF:
+		oneplus_set_lcd_off_status(chip, pval->intval);
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+}
+
+static int fg_gen3_op_property_is_writeable(enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_SET_ALLOW_READ_EXTERN_FG_IIC;
+}
+
+static void fg_gen3_op_notify_charger(struct fg_dev *fg)
+{
+	union power_supply_propval prop = {0, };
+	int rc;
+
+	prop.intval = fg->bp.fastchg_curr_ma * 1000;
+	rc = power_supply_set_property(fg->batt_psy,
+			POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX, &prop);
+	if (rc < 0) {
+		pr_err("Error in setting constant_charge_current_max property on batt_psy, rc=%d\n",
+			rc);
+		return;
+	}
+
+	rc = power_supply_set_property(fg->batt_psy,
+			POWER_SUPPLY_PROP_NOTIFY_CHARGER_SET_PARAMETER, &prop);
+	if (rc < 0) {
+		pr_err("Error in setting voltage_max property on batt_psy, rc=%d\n",
+			rc);
+		return;
+	}
+
+	fg_dbg(fg, FG_STATUS, "Notified charger on float voltage and FCC\n");
+}
+
+static void fg_gen3_op_install(struct fg_dev *fg)
+{
+	fg->notify_charger = fg_gen3_op_notify_charger;
+}
+#else
+static inline int fg_gen3_op_set_property(struct fg_gen3_chip *chip,
+				enum power_supply_property psp,
+				const union power_supply_propval *pval)
+{
+	return 0;
+}
+
+static inline int fg_gen3_op_property_is_writeable(
+				enum power_supply_property psp)
+{
+	return 0;
+}
+
+static inline void fg_gen3_op_install(struct fg_dev *fg)
+{
+}
+#endif
+
 static bool fg_profile_dump;
 static ssize_t profile_dump_show(struct device *dev, struct device_attribute
 				*attr, char *buf)
@@ -487,27 +602,6 @@ static ssize_t profile_dump_store(struct device *dev,
 	return count;
 }
 static DEVICE_ATTR_RW(profile_dump);
-
-static struct external_battery_gauge *external_fg;
-
-void external_battery_gauge_register(struct external_battery_gauge *batt_gauge)
-{
-        if (external_fg) {
-                external_fg = batt_gauge;
-                pr_err("qpnp-charger %s multiple battery gauge called\n",
-                                                                __func__);
-        } else {
-                external_fg = batt_gauge;
-        }
-}
-EXPORT_SYMBOL(external_battery_gauge_register);
-
-void external_battery_gauge_unregister(
-        struct external_battery_gauge *batt_gauge)
-{
-        external_fg = NULL;
-}
-EXPORT_SYMBOL(external_battery_gauge_unregister);
 
 static int fg_sram_dump_period_ms = 20000;
 static ssize_t sram_dump_period_ms_show(struct device *dev,
@@ -3660,6 +3754,20 @@ end_work:
 
 /* PSY CALLBACKS STAY HERE */
 
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+static int fg_get_external_charge(int (*get_charge)(void), int *charge_uah)
+{
+	int rc;
+
+	rc = get_charge();
+	if (rc < 0)
+		return rc;
+
+	*charge_uah = rc;
+	return 0;
+}
+#endif
+
 static int fg_psy_get_property(struct power_supply *psy,
 				       enum power_supply_property psp,
 				       union power_supply_propval *pval)
@@ -3670,7 +3778,13 @@ static int fg_psy_get_property(struct power_supply *psy,
 
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CAPACITY:
-		rc = fg_get_prop_capacity(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_soc)
+			pval->intval = external_fg->get_battery_soc();
+		else
+#endif
+			rc = fg_get_prop_capacity(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_REAL_CAPACITY:
 		rc = fg_get_prop_real_capacity(fg, &pval->intval);
@@ -3679,16 +3793,43 @@ static int fg_psy_get_property(struct power_supply *psy,
 		rc = fg_get_msoc_raw(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_mvolts)
+			pval->intval = external_fg->get_battery_mvolts();
+		else
+#endif
 		if (fg->battery_missing)
 			pval->intval = 3700000;
 		else
 			rc = fg_get_battery_voltage(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_average_current)
+			pval->intval = external_fg->get_average_current();
+		else
+#endif
+			rc = fg_get_battery_current(fg, &pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_FG_VOLTAGE_NOW:
+		if (fg->battery_missing)
+			pval->intval = 3700000;
+		else
+			rc = fg_get_battery_voltage(fg, &pval->intval);
+		break;
+	case POWER_SUPPLY_PROP_FG_CURRENT_NOW:
 		rc = fg_get_battery_current(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
-		rc = fg_get_battery_temp(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg && external_fg
+				&& external_fg->get_battery_temperature)
+			pval->intval = external_fg->get_battery_temperature();
+		else
+#endif
+			rc = fg_get_battery_temp(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_COLD_TEMP:
 		rc = fg_get_jeita_threshold(fg, JEITA_COLD, &pval->intval);
@@ -3725,7 +3866,19 @@ static int fg_psy_get_property(struct power_supply *psy,
 		rc = fg_get_sram_prop(fg, FG_SRAM_OCV, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		pval->intval = chip->cl.nom_cap_uah;
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg) {
+			if (!get_extern_fg_regist_done() || !external_fg ||
+					!external_fg->get_batt_design_capacity) {
+				rc = -ENODATA;
+				break;
+			}
+			rc = fg_get_external_charge(
+				external_fg->get_batt_design_capacity,
+				&pval->intval);
+		} else
+#endif
+			pval->intval = chip->cl.nom_cap_uah;
 		break;
 	case POWER_SUPPLY_PROP_RESISTANCE_ID:
 		pval->intval = fg->batt_id_ohms;
@@ -3746,21 +3899,54 @@ static int fg_psy_get_property(struct power_supply *psy,
 		rc = fg_get_charge_raw(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_NOW:
-		pval->intval = chip->cl.init_cc_uah;
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg) {
+			if (!get_extern_fg_regist_done() || !external_fg ||
+					!external_fg->get_batt_charge_now) {
+				rc = -ENODATA;
+				break;
+			}
+			rc = fg_get_external_charge(
+				external_fg->get_batt_charge_now,
+				&pval->intval);
+		} else
+#endif
+			pval->intval = chip->cl.init_cc_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
-		pval->intval = chip->cl.learned_cc_uah;
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg) {
+			if (!get_extern_fg_regist_done() || !external_fg ||
+					!external_fg->get_batt_full_chg_capacity) {
+				rc = -ENODATA;
+				break;
+			}
+			rc = fg_get_external_charge(
+				external_fg->get_batt_full_chg_capacity,
+				&pval->intval);
+		} else
+#endif
+			pval->intval = chip->cl.learned_cc_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
-		rc = fg_get_charge_counter(fg, &pval->intval);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+		if (chip->dt.use_external_fg) {
+			if (!get_extern_fg_regist_done() || !external_fg ||
+					!external_fg->get_batt_remaining_capacity) {
+				rc = -ENODATA;
+				break;
+			}
+			rc = fg_get_external_charge(
+				external_fg->get_batt_remaining_capacity,
+				&pval->intval);
+		} else
+#endif
+			rc = fg_get_charge_counter(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_COUNTER_SHADOW:
 		rc = fg_get_charge_counter_shadow(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
-		rc = fg_get_time_to_full(fg, &pval->intval);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
 		rc = fg_get_time_to_full(fg, &pval->intval);
 		break;
 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
@@ -3913,6 +4099,7 @@ static int fg_psy_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_RESISTANCE:
 		rc = fg_force_esr_meas(fg);
 		break;
+
 	case POWER_SUPPLY_PROP_CHARGE_QNOVO_ENABLE:
 		rc = fg_prepare_for_qnovo(fg, pval->intval);
 		break;
@@ -3988,6 +4175,7 @@ static int fg_psy_set_property(struct power_supply *psy,
 		}
 		break;
 	default:
+		rc = fg_gen3_op_set_property(chip, psp, pval);
 		break;
 	}
 
@@ -4008,7 +4196,7 @@ static int fg_property_is_writeable(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_HOT_TEMP:
 		return 1;
 	default:
-		break;
+		return fg_gen3_op_property_is_writeable(psp);
 	}
 
 	return 0;
@@ -4095,12 +4283,14 @@ static enum power_supply_property fg_psy_props[] = {
 	POWER_SUPPLY_PROP_CHARGE_COUNTER_SHADOW,
 	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
 	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
-	POWER_SUPPLY_PROP_TIME_TO_FULL_NOW,
 	POWER_SUPPLY_PROP_SOC_REPORTING_READY,
 	POWER_SUPPLY_PROP_DEBUG_BATTERY,
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
 	POWER_SUPPLY_PROP_CC_STEP,
 	POWER_SUPPLY_PROP_CC_STEP_SEL,
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	POWER_SUPPLY_PROP_SET_ALLOW_READ_EXTERN_FG_IIC,
+#endif
 	POWER_SUPPLY_PROP_FG_RESET_CLOCK,
 };
 
@@ -5140,9 +5330,11 @@ static int fg_parse_dt(struct fg_gen3_chip *chip)
 	else
 		chip->dt.rsense_sel = (u8)temp & SOURCE_SELECT_MASK;
 
-	chip->use_external_fg =
-	of_property_read_bool(node, "oem,use_external_fg");
-	pr_info("use_external_fg=%d\n", chip->use_external_fg);
+#ifdef CONFIG_ARCH_ONEPLUS_MSM8998
+	chip->dt.use_external_fg =
+		of_property_read_bool(node, "oem,use_external_fg");
+	pr_info("use_external_fg=%d\n", chip->dt.use_external_fg);
+#endif
 
 	chip->dt.jeita_thresholds[JEITA_COLD] = DEFAULT_BATT_TEMP_COLD;
 	chip->dt.jeita_thresholds[JEITA_COOL] = DEFAULT_BATT_TEMP_COOL;
@@ -5427,6 +5619,7 @@ static int fg_gen3_probe(struct platform_device *pdev)
 
 	fg = &chip->fg;
 	fg->dev = &pdev->dev;
+	fg_gen3_op_install(fg);
 	fg->debug_mask = &fg_gen3_debug_mask;
 	fg->irqs = fg_irqs;
 	fg->charge_status = -EINVAL;

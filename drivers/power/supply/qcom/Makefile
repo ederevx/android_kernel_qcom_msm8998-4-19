@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
+obj-$(CONFIG_FG_BQ27541)		+= bq27541_fuelgauger.o
 obj-$(CONFIG_SMB1360_CHARGER_FG)	+= smb1360-charger-fg.o
 obj-$(CONFIG_QPNP_SMB5)			+= step-chg-jeita.o battery.o qpnp-smb5.o smb5-lib.o pmic-voter.o storm-watch.o schgm-flash.o
 obj-$(CONFIG_SMB1390_CHARGE_PUMP_PSY)	+= smb1390-charger-psy.o pmic-voter.o
-obj-$(CONFIG_FG_BQ27541)        += bq27541_fuelgauger.o
 obj-$(CONFIG_SMB1355_SLAVE_CHARGER)	+= smb1355-charger.o pmic-voter.o
 obj-$(CONFIG_SMB1351_USB_CHARGER)	+= smb1351-charger.o pmic-voter.o battery.o
 obj-$(CONFIG_QPNP_SMB2)			+= step-chg-jeita.o battery.o qpnp-smb2.o smb-lib.o pmic-voter.o storm-watch.o
@@ -17,4 +17,5 @@ obj-$(CONFIG_SMB1398_CHARGER)		+= smb1398-charger.o pmic-voter.o
 obj-$(CONFIG_QPNP_SMBLITE)		+= step-chg-jeita.o battery.o qpnp-smblite.o smblite-lib.o pmic-voter.o storm-watch.o schgm-flashlite.o
 obj-$(CONFIG_QPNP_VM_BMS)		+= qpnp-vm-bms.o batterydata-lib.o batterydata-interface.o
 obj-$(CONFIG_QPNP_LINEAR_CHARGER)	+= qpnp-linear-charger.o
-obj-$(CONFIG_ONEPLUS_FASTCHG)   += op_dash_adapter.o oneplus_fastcg.o
+obj-$(CONFIG_ONEPLUS_FASTCHG)		+= op_dash_adapter.o oneplus_fastcg.o
+obj-$(CONFIG_ARCH_ONEPLUS_MSM8998)	+= smb-lib-dash.o

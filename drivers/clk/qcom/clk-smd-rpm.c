@@ -1228,6 +1228,11 @@ static DEFINE_CLK_VOTER(aggre1_noc_msmbus_a_clk, aggre1_noc_a_clk, LONG_MAX);
 static DEFINE_CLK_VOTER(aggre1_noc_smmu_clk, aggre1_noc_clk, 1000);
 static DEFINE_CLK_VOTER(aggre1_noc_usb_clk, aggre1_noc_clk, 19200000);
 
+#ifdef CONFIG_ONEPLUS_FASTCHG
+static DEFINE_CLK_VOTER(uart_cnoc_msmbus_a_clk, cnoc_a_clk, LONG_MAX);
+static DEFINE_CLK_VOTER(uart_snoc_msmbus_a_clk, snoc_a_clk, LONG_MAX);
+#endif
+
 /* Voter Branch clocks */
 static DEFINE_CLK_BRANCH_VOTER(bi_tcxo_dwc3_clk, bi_tcxo);
 static DEFINE_CLK_BRANCH_VOTER(bi_tcxo_pil_ssc_clk, bi_tcxo);
@@ -1300,6 +1305,10 @@ static struct clk_hw *msm8998_clks[] = {
 	[SNOC_MSMBUS_CLK]	= &snoc_msmbus_clk.hw,
 	[SNOC_MSMBUS_A_CLK]	= &snoc_msmbus_a_clk.hw,
 	[CNOC_KEEPALIVE_A_CLK] = &cnoc_periph_keepalive_a_clk.hw,
+#ifdef CONFIG_ONEPLUS_FASTCHG
+	[UART_CNOC_MSMBUS_A_CLK] = &uart_cnoc_msmbus_a_clk.hw,
+	[UART_SNOC_MSMBUS_A_CLK] = &uart_snoc_msmbus_a_clk.hw,
+#endif
 	[AGGR1_NOC_MSMBUS_CLK] = &aggre1_noc_msmbus_clk.hw,
 	[AGGR1_NOC_MSMBUS_A_CLK] = &aggre1_noc_msmbus_a_clk.hw,
 	[AGGR1_NOC_SMMU_CLK]	= &aggre1_noc_smmu_clk.hw,

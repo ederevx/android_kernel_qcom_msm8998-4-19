@@ -112,10 +112,14 @@ void kick_all_cpus_sync(void);
 void wake_up_all_idle_cpus(void);
 
 #ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
-#if IS_ENABLED(CONFIG_QCOM_WATCHDOG_V2)
-int qcom_wdog_cpu_idle_pc_state(int cpu);
+#if IS_ENABLED(CONFIG_ARM64)
+bool arch_csd_read_call_count(unsigned int cpu, unsigned int *count);
 #else
-static inline int qcom_wdog_cpu_idle_pc_state(int cpu) { return -1; }
+static inline bool arch_csd_read_call_count(unsigned int cpu,
+					    unsigned int *count)
+{
+	return false;
+}
 #endif
 #endif
 

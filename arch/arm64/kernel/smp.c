@@ -965,6 +965,23 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 	set_irq_regs(old_regs);
 }
 
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+/*
+ * Live IPI_CALL_FUNC entry count for a CPU. The enum is private to this
+ * file, so the accessor lives here; a caller that cannot measure must be
+ * told so rather than handed a zero.
+ */
+bool arch_csd_read_call_count(unsigned int cpu, unsigned int *count)
+{
+	if (cpu >= nr_cpu_ids)
+		return false;
+
+	*count = READ_ONCE(__get_irq_stat(cpu, ipi_irqs[IPI_CALL_FUNC]));
+	return true;
+}
+EXPORT_SYMBOL_GPL(arch_csd_read_call_count);
+#endif
+
 void smp_send_reschedule(int cpu)
 {
 	BUG_ON(cpu_is_offline(cpu));

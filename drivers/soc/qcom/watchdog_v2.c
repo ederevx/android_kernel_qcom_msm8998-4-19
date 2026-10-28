@@ -167,15 +167,6 @@ module_param(WDT_HZ, long, 0000);
 static int ipi_en = IPI_CORES_IN_LPM;
 module_param(ipi_en, int, 0444);
 
-int qcom_wdog_cpu_idle_pc_state(int cpu)
-{
-	/* cpu_idle_pc_state[] is only maintained by the CPU PM notifier,
-	 * which is registered only when the LPM ping optimization is off.
-	 */
-	if (cpu < 0 || cpu >= nr_cpu_ids || ipi_en)
-		return -1;
-	return cpu_idle_pc_state[cpu];
-}
 
 static void dump_cpu_alive_mask(struct msm_watchdog_data *wdog_dd)
 {

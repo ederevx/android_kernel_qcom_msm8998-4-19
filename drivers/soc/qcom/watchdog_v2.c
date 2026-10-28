@@ -530,19 +530,19 @@ static void print_irq_stat(struct msm_watchdog_data *wdog_dd, bool loud)
 		info = &wdog_dd->irq_counts[index];
 		irq_stat_pr(loud, "%u:%u\n", info->irq, info->total_count);
 	}
-	pr_info("\n");
+	irq_stat_pr(loud, "\n");
 
 	irq_stat_pr(loud, "(cpu:irq_count)-\n");
 	for_each_possible_cpu(cpu)
 		irq_stat_pr(loud, "%u:%u\n", cpu, wdog_dd->tot_irq_count[cpu]);
-	pr_info("\n");
+	irq_stat_pr(loud, "\n");
 
 	irq_stat_pr(loud, "(ipi:irq_count)-\n");
 	for (index = 0; index < NR_IPI; index++) {
 		info = &wdog_dd->ipi_counts[index];
 		irq_stat_pr(loud, "%u:%u\n", info->irq, info->total_count);
 	}
-	pr_info("\n");
+	irq_stat_pr(loud, "\n");
 }
 
 static void __compute_irq_stat(struct msm_watchdog_data *wdog_dd, bool loud)

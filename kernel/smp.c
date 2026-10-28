@@ -20,6 +20,8 @@
 #include <linux/sched/idle.h>
 #include <linux/hypervisor.h>
 #include <linux/suspend.h>
+#include <linux/sched/clock.h>
+#include <linux/atomic.h>
 
 #include "smpboot.h"
 
@@ -107,9 +109,61 @@ void __init call_function_init(void)
  * previous function call. For multi-cpu calls its even more interesting
  * as we'll have to ensure no other cpu is observing our csd.
  */
+/*
+ * Diagnostics for a CSD-lock acquisition that has been stuck for too long.
+ *
+ * Adapted from the upstream "kernel/smp: Provide CSD lock timeout
+ * diagnostics" work (35feb60474bf) to the 4.19 call_single_data_t, which
+ * carries no src/dst fields; they are added to the structure under the same
+ * option and filled in by generic_exec_single().
+ *
+ * The purpose is twofold: name the target CPU that is not draining its
+ * call_single_queue, and RE-SEND the IPI. If the wait completes after the
+ * re-send, the original IPI was lost; if it does not, the target is not
+ * responding at all. Neither outcome distinguishes a target that is gone
+ * from one that never woke.
+ */
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+#define CSD_LOCK_TIMEOUT_NS		(5ULL * NSEC_PER_SEC)
+#define CSD_LOCK_WAIT_CHECK_INTERVAL	1000000U
+
+static atomic_t csd_lock_stuck;
+
+static void csd_lock_stuck_report(struct __call_single_data *csd, u64 dur)
+{
+	int n = atomic_inc_return(&csd_lock_stuck);
+
+	pr_info("csd: Detected non-responsive CSD lock (#%d) on CPU#%d, waiting %llu ns for CPU#%02d %pS(%px)\n",
+		n, raw_smp_processor_id(), dur, csd->dst, csd->func,
+		csd->info);
+	pr_info("csd: Re-sending CSD lock (#%d) IPI from CPU#%02d to CPU#%02d\n",
+		n, raw_smp_processor_id(), csd->dst);
+	arch_send_call_function_single_ipi(csd->dst);
+}
+#endif /* CONFIG_CSD_LOCK_WAIT_DEBUG */
+
 static __always_inline void csd_lock_wait(struct __call_single_data *csd)
 {
-	smp_cond_load_acquire(&csd->flags, !(VAL & CSD_FLAG_LOCK));
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+	u64 start = 0;
+	unsigned int i = 0;
+#endif
+
+	for (;;) {
+		if (!smp_cond_load_acquire(&csd->flags, !(VAL & CSD_FLAG_LOCK)))
+			break;
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+		if (++i < CSD_LOCK_WAIT_CHECK_INTERVAL)
+			continue;
+		i = 0;
+		if (!start) {
+			start = sched_clock();
+		} else if (sched_clock() - start > CSD_LOCK_TIMEOUT_NS) {
+			csd_lock_stuck_report(csd, sched_clock() - start);
+			start = 0;
+		}
+#endif
+	}
 }
 
 static __always_inline void csd_lock(struct __call_single_data *csd)
@@ -167,6 +221,10 @@ static int generic_exec_single(int cpu, struct __call_single_data *csd,
 
 	csd->func = func;
 	csd->info = info;
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+	csd->src = smp_processor_id();
+	csd->dst = cpu;
+#endif
 
 	/*
 	 * The list addition should be visible before sending the IPI

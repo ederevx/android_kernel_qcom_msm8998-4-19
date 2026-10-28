@@ -71,6 +71,13 @@ static dma_addr_t log_buf_paddr;
 static struct msm_watchdog_data *wdog_data;
 
 static int cpu_idle_pc_state[NR_CPUS];
+/*
+ * Diagnostics for a CPU that entered power collapse and has not reported
+ * back. Such a CPU is skipped by the IPI ping below, so it can never be
+ * named as unresponsive and everything else simply softlocks on it.
+ */
+#define WDOG_PC_STUCK_WARN_MS	10000UL
+static unsigned long long cpu_idle_pc_since[NR_CPUS];
 
 struct irq_info {
 	unsigned int irq;
@@ -418,7 +425,17 @@ static void ping_other_cpus(struct msm_watchdog_data *wdog_dd)
 	/* Make sure alive mask is cleared and set in order */
 	smp_mb();
 	for_each_cpu(cpu, cpu_online_mask) {
-		if (!cpu_idle_pc_state[cpu] && !cpu_isolated(cpu)) {
+		if (cpu_idle_pc_state[cpu]) {
+			unsigned long long since = cpu_idle_pc_since[cpu];
+
+			if (since && sched_clock() - since >
+					WDOG_PC_STUCK_WARN_MS * 1000000ULL)
+				pr_warn("wdog: CPU#%02d has been in power collapse for %llu ms\n",
+					cpu,
+					(sched_clock() - since) / 1000000ULL);
+			continue;
+		}
+		if (!cpu_isolated(cpu)) {
 			wdog_dd->ping_start[cpu] = sched_clock();
 			smp_call_function_single(cpu, keep_alive_response,
 						 wdog_dd, 1);
@@ -665,10 +682,12 @@ static int wdog_cpu_pm_notify(struct notifier_block *self,
 	switch (action) {
 	case CPU_PM_ENTER:
 		cpu_idle_pc_state[cpu] = 1;
+		cpu_idle_pc_since[cpu] = sched_clock();
 		break;
 	case CPU_PM_ENTER_FAILED:
 	case CPU_PM_EXIT:
 		cpu_idle_pc_state[cpu] = 0;
+		cpu_idle_pc_since[cpu] = 0;
 		break;
 	}
 

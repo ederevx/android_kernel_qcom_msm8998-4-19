@@ -30,6 +30,14 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
 
+#ifdef CONFIG_QCOM_EDL_900E_ENTRY
+#include <linux/slab.h>
+#include <linux/jiffies.h>
+#include <linux/nmi.h>
+#include <linux/sched.h>
+#include <linux/workqueue.h>
+#endif
+
 /*
    - No shared variables, all the data are CPU local.
    - If a softirq needs serialization, let it serialize itself
@@ -66,7 +74,10 @@ DEFINE_PER_CPU(__u32, active_softirqs);
 
 const char * const softirq_to_name[NR_SOFTIRQS] = {
 	"HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "IRQ_POLL",
-	"TASKLET", "SCHED", "HRTIMER", "RCU"
+	"TASKLET", "SCHED", "HRTIMER", "RCU",
+#ifdef CONFIG_QCOM_EDL_900E_ENTRY
+	"QCOM_EDL_900E",
+#endif
 };
 
 /*
@@ -630,6 +641,126 @@ void tasklet_hrtimer_init(struct tasklet_hrtimer *ttimer,
 }
 EXPORT_SYMBOL_GPL(tasklet_hrtimer_init);
 
+#ifdef CONFIG_QCOM_EDL_900E_ENTRY
+/*
+ * Controlled QCOM EDL (900E) entry.
+ *
+ * A bring-up recovery aid: a one-shot softirq is registered at softirq_init(),
+ * then work is queued once the QCOM restart driver has installed the panic and
+ * emergency-download paths. The worker busy-polls for a fixed two minutes,
+ * then raises the softirq. It remains TASK_RUNNING, so the hung-task detector
+ * does not apply; it yields when needed and refreshes the soft-lockup and
+ * workqueue watchdogs while polling. A fault in softirq context is
+ * in_interrupt(), so the kernel forces a panic regardless of panic_on_oops;
+ * the QCOM panic path then arms the download-mode cookie and warm-resets into
+ * Emergency Download
+ * mode, which enumerates as Qualcomm USB PID 900E.
+ *
+ * The only purpose is to escape an init boot loop: a bring-up build that
+ * cannot finish init drops into EDL after the delay so it can be reflashed
+ * instead of looping forever. It deliberately crashes the kernel and must
+ * never be enabled in a production build.
+ */
+#define EDL_900E_POLL_MS	MSEC_PER_SEC
+
+struct edl_900e_victim {
+	void (*probe)(struct edl_900e_victim *self);
+	unsigned long token;
+};
+
+/*
+ * Global object left pointing at freed memory on purpose: it is allocated,
+ * published here, then freed without clearing this pointer.
+ */
+static struct edl_900e_victim *edl_900e_dangling;
+static bool edl_900e_triggered;
+
+bool qcom_edl_900e_triggered(void)
+{
+	return READ_ONCE(edl_900e_triggered);
+}
+
+static void edl_900e_action(struct softirq_action *unused)
+{
+	struct edl_900e_victim *victim = edl_900e_dangling;
+
+	pr_emerg("qcom-edl-900e: entering controlled EDL from softirq\n");
+
+	/*
+	 * edl_900e_work_fn() already freed the object but left this global
+	 * pointing at it, so the write and the indirect call below run through
+	 * a dangling pointer. probe was set to NULL before the free, so the
+	 * call faults even if the freed slot was not yet reused. In softirq
+	 * context that fault is a forced panic.
+	 */
+	/* Select the post-dump boot target only once the controlled fault fires. */
+	WRITE_ONCE(edl_900e_triggered, true);
+	victim->token = 0x900e900e900e900eUL;
+	victim->probe(victim);
+
+	/*
+	 * Backstop: if the freed slot happened to stay mapped and benign so
+	 * the access above did not fault, take the panic path directly so EDL
+	 * is still reached.
+	 */
+	panic("qcom-edl-900e: controlled EDL entry");
+}
+
+static void edl_900e_work_fn(struct work_struct *unused)
+{
+	struct edl_900e_victim *victim;
+	unsigned long deadline;
+	unsigned long watchdog_poll;
+
+	deadline = jiffies + msecs_to_jiffies(QCOM_EDL_900E_DELAY_MS);
+	watchdog_poll = jiffies + msecs_to_jiffies(EDL_900E_POLL_MS);
+	while (time_before(jiffies, deadline)) {
+		cpu_relax();
+		cond_resched();
+		if (time_after_eq(jiffies, watchdog_poll)) {
+			touch_softlockup_watchdog();
+			watchdog_poll = jiffies +
+				msecs_to_jiffies(EDL_900E_POLL_MS);
+		}
+	}
+
+	victim = kmalloc(sizeof(*victim), GFP_KERNEL);
+	if (victim) {
+		victim->probe = NULL;
+		victim->token = 0;
+		edl_900e_dangling = victim;
+		/*
+		 * Free the object but deliberately leave the global set: a
+		 * freed object behind a live pointer.
+		 */
+		kfree(victim);
+	}
+
+	raise_softirq(QCOM_EDL_900E_SOFTIRQ);
+}
+
+static DECLARE_WORK(edl_900e_work, edl_900e_work_fn);
+
+static void __init edl_900e_register(void)
+{
+	open_softirq(QCOM_EDL_900E_SOFTIRQ, edl_900e_action);
+}
+
+bool qcom_edl_900e_arm(void)
+{
+	if (!queue_work(system_long_wq, &edl_900e_work)) {
+		pr_err("qcom-edl-900e: controlled EDL entry already armed\n");
+		return false;
+	}
+
+	pr_warn("qcom-edl-900e: controlled EDL entry armed, firing in %lu ms\n",
+		(unsigned long)QCOM_EDL_900E_DELAY_MS);
+	return true;
+}
+#else
+static inline void __init edl_900e_register(void) { }
+#endif /* CONFIG_QCOM_EDL_900E_ENTRY */
+
 void __init softirq_init(void)
 {
 	int cpu;
@@ -643,6 +774,8 @@ void __init softirq_init(void)
 
 	open_softirq(TASKLET_SOFTIRQ, tasklet_action);
 	open_softirq(HI_SOFTIRQ, tasklet_hi_action);
+
+	edl_900e_register();
 }
 
 static int ksoftirqd_should_run(unsigned int cpu)

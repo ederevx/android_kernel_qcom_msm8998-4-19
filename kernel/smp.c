@@ -22,6 +22,7 @@
 #include <linux/suspend.h>
 #include <linux/sched/clock.h>
 #include <linux/atomic.h>
+#include <linux/sched/debug.h>
 
 #include "smpboot.h"
 
@@ -115,27 +116,30 @@ void __init call_function_init(void)
  * Adapted from the upstream "kernel/smp: Provide CSD lock timeout
  * diagnostics" work (35feb60474bf) to the 4.19 call_single_data_t, which
  * carries no src/dst fields; they are added to the structure under the same
- * option and filled in by generic_exec_single().
+ * option.
  *
- * The purpose is twofold: name the target CPU that is not draining its
- * call_single_queue, and RE-SEND the IPI. If the wait completes after the
- * re-send, the original IPI was lost; if it does not, the target is not
- * responding at all. Neither outcome distinguishes a target that is gone
- * from one that never woke.
+ * The wait must not use smp_cond_load_acquire(): that macro loops until the
+ * condition holds, so a timeout check placed after it never runs during a
+ * stall. Spin on a plain acquire load and compare wall time each iteration
+ * instead, and the report no longer depends on how fast the loop happens to
+ * spin.
  */
 #ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
 #define CSD_LOCK_TIMEOUT_NS		(5ULL * NSEC_PER_SEC)
-#define CSD_LOCK_WAIT_CHECK_INTERVAL	1000000U
 
 static atomic_t csd_lock_stuck;
 
-static void csd_lock_stuck_report(struct __call_single_data *csd, u64 dur)
+static noinline void csd_lock_stuck_report(struct __call_single_data *csd,
+					   u64 dur, bool first)
 {
 	int n = atomic_inc_return(&csd_lock_stuck);
 
-	pr_info("csd: Detected non-responsive CSD lock (#%d) on CPU#%d, waiting %llu ns for CPU#%02d %pS(%px)\n",
+	pr_info("csd: Detected non-responsive CSD lock (#%d) on CPU#%d, waiting %llu ns for CPU#%02d %pS(%px) pc=%d\n",
 		n, raw_smp_processor_id(), dur, csd->dst, csd->func,
-		csd->info);
+		csd->info, qcom_wdog_cpu_idle_pc_state(csd->dst));
+	if (!first)
+		return;
+	dump_cpu_task(csd->dst);
 	pr_info("csd: Re-sending CSD lock (#%d) IPI from CPU#%02d to CPU#%02d\n",
 		n, raw_smp_processor_id(), csd->dst);
 	arch_send_call_function_single_ipi(csd->dst);
@@ -145,25 +149,19 @@ static void csd_lock_stuck_report(struct __call_single_data *csd, u64 dur)
 static __always_inline void csd_lock_wait(struct __call_single_data *csd)
 {
 #ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
-	u64 start = 0;
-	unsigned int i = 0;
-#endif
+	u64 start = sched_clock(), last = start, now;
 
-	for (;;) {
-		if (!smp_cond_load_acquire(&csd->flags, !(VAL & CSD_FLAG_LOCK)))
-			break;
-#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
-		if (++i < CSD_LOCK_WAIT_CHECK_INTERVAL)
+	while (smp_load_acquire(&csd->flags) & CSD_FLAG_LOCK) {
+		cpu_relax();
+		now = sched_clock();
+		if (now - last < CSD_LOCK_TIMEOUT_NS)
 			continue;
-		i = 0;
-		if (!start) {
-			start = sched_clock();
-		} else if (sched_clock() - start > CSD_LOCK_TIMEOUT_NS) {
-			csd_lock_stuck_report(csd, sched_clock() - start);
-			start = 0;
-		}
-#endif
+		csd_lock_stuck_report(csd, now - start, last == start);
+		last = now;
 	}
+#else
+	smp_cond_load_acquire(&csd->flags, !(VAL & CSD_FLAG_LOCK));
+#endif
 }
 
 static __always_inline void csd_lock(struct __call_single_data *csd)
@@ -515,6 +513,10 @@ void smp_call_function_many(const struct cpumask *mask,
 			csd->flags |= CSD_FLAG_SYNCHRONOUS;
 		csd->func = func;
 		csd->info = info;
+#ifdef CONFIG_CSD_LOCK_WAIT_DEBUG
+		csd->src = smp_processor_id();
+		csd->dst = cpu;
+#endif
 		if (llist_add(&csd->llist, &per_cpu(call_single_queue, cpu)))
 			__cpumask_set_cpu(cpu, cfd->cpumask_ipi);
 	}

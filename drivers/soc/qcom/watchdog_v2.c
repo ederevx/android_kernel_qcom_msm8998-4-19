@@ -71,6 +71,7 @@ static dma_addr_t log_buf_paddr;
 static struct msm_watchdog_data *wdog_data;
 
 static int cpu_idle_pc_state[NR_CPUS];
+
 /*
  * Diagnostics for a CPU that entered power collapse and has not reported
  * back. Such a CPU is skipped by the IPI ping below, so it can never be
@@ -165,6 +166,16 @@ module_param(WDT_HZ, long, 0000);
 
 static int ipi_en = IPI_CORES_IN_LPM;
 module_param(ipi_en, int, 0444);
+
+int qcom_wdog_cpu_idle_pc_state(int cpu)
+{
+	/* cpu_idle_pc_state[] is only maintained by the CPU PM notifier,
+	 * which is registered only when the LPM ping optimization is off.
+	 */
+	if (cpu < 0 || cpu >= nr_cpu_ids || ipi_en)
+		return -1;
+	return cpu_idle_pc_state[cpu];
+}
 
 static void dump_cpu_alive_mask(struct msm_watchdog_data *wdog_dd)
 {
@@ -503,34 +514,38 @@ out:
 	return pivot;
 }
 
-static void print_irq_stat(struct msm_watchdog_data *wdog_dd)
+#define irq_stat_pr(loud, fmt, ...) \
+	do { if (loud) pr_info(fmt, ##__VA_ARGS__); \
+	     else pr_debug(fmt, ##__VA_ARGS__); } while (0)
+
+static void print_irq_stat(struct msm_watchdog_data *wdog_dd, bool loud)
 {
 	int index;
 	int cpu;
 	struct irq_info *info;
 
 
-	pr_debug("(virq:irq_count)-\n");
+	irq_stat_pr(loud, "(virq:irq_count)-\n");
 	for (index = 0; index < NR_TOP_HITTERS; index++) {
 		info = &wdog_dd->irq_counts[index];
-		pr_debug("%u:%u\n", info->irq, info->total_count);
+		irq_stat_pr(loud, "%u:%u\n", info->irq, info->total_count);
 	}
-	pr_debug("\n");
+	pr_info("\n");
 
-	pr_debug("(cpu:irq_count)-\n");
+	irq_stat_pr(loud, "(cpu:irq_count)-\n");
 	for_each_possible_cpu(cpu)
-		pr_debug("%u:%u\n", cpu, wdog_dd->tot_irq_count[cpu]);
-	pr_debug("\n");
+		irq_stat_pr(loud, "%u:%u\n", cpu, wdog_dd->tot_irq_count[cpu]);
+	pr_info("\n");
 
-	pr_debug("(ipi:irq_count)-\n");
+	irq_stat_pr(loud, "(ipi:irq_count)-\n");
 	for (index = 0; index < NR_IPI; index++) {
 		info = &wdog_dd->ipi_counts[index];
-		pr_debug("%u:%u\n", info->irq, info->total_count);
+		irq_stat_pr(loud, "%u:%u\n", info->irq, info->total_count);
 	}
-	pr_debug("\n");
+	pr_info("\n");
 }
 
-static void compute_irq_stat(struct work_struct *work)
+static void __compute_irq_stat(struct msm_watchdog_data *wdog_dd, bool loud)
 {
 	unsigned int count;
 	int index = 0, cpu, irq;
@@ -539,9 +554,6 @@ static void compute_irq_stat(struct work_struct *work)
 	struct irq_info *start;
 	struct irq_info key = {0};
 	unsigned int running;
-	struct msm_watchdog_data *wdog_dd = container_of(work,
-					    struct msm_watchdog_data,
-					    irq_counts_work);
 
 	size_t arr_size = ARRAY_SIZE(wdog_dd->irq_counts);
 
@@ -625,8 +637,14 @@ static void compute_irq_stat(struct work_struct *work)
 		}
 	}
 
-	print_irq_stat(wdog_dd);
+	print_irq_stat(wdog_dd, loud);
 	atomic_xchg(&wdog_dd->irq_counts_running, 0);
+}
+
+static void compute_irq_stat(struct work_struct *work)
+{
+	__compute_irq_stat(container_of(work, struct msm_watchdog_data,
+					irq_counts_work), false);
 }
 
 static __ref int watchdog_kthread(void *arg)
@@ -739,7 +757,7 @@ void msm_trigger_wdog_bite(void)
 	if (!wdog_data)
 		return;
 
-	compute_irq_stat(&wdog_data->irq_counts_work);
+	__compute_irq_stat(wdog_data, true);
 	pr_info("Causing a watchdog bite!");
 	__raw_writel(1, wdog_data->base + WDT0_BITE_TIME);
 	/* Mke sure bite time is written before we reset */

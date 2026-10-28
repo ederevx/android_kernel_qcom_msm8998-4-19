@@ -394,8 +394,8 @@ static u64 notrace arm64_1188873_read_cntvct_el0(void)
 DEFINE_PER_CPU(const struct arch_timer_erratum_workaround *, timer_unstable_counter_workaround);
 EXPORT_SYMBOL_GPL(timer_unstable_counter_workaround);
 
-DEFINE_STATIC_KEY_FALSE(arch_timer_read_ool_enabled);
-EXPORT_SYMBOL_GPL(arch_timer_read_ool_enabled);
+atomic_t timer_unstable_counter_workaround_in_use = ATOMIC_INIT(0);
+EXPORT_SYMBOL_GPL(timer_unstable_counter_workaround_in_use);
 
 static void erratum_set_next_event_tval_generic(const int access, unsigned long evt,
 						struct clock_event_device *clk)
@@ -574,11 +574,7 @@ void arch_timer_enable_workaround(const struct arch_timer_erratum_workaround *wa
 			per_cpu(timer_unstable_counter_workaround, i) = wa;
 	}
 
-	/*
-	 * Use the locked version, as we're called from the CPU
-	 * hotplug framework. Otherwise, we end-up in deadlock-land.
-	 */
-	static_branch_enable_cpuslocked(&arch_timer_read_ool_enabled);
+	atomic_set(&timer_unstable_counter_workaround_in_use, 1);
 
 	/*
 	 * Don't use the vdso fastpath if errata require using the

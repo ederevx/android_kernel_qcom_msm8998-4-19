@@ -22,6 +22,7 @@
 #include <asm/barrier.h>
 #include <asm/sysreg.h>
 
+#include <linux/atomic.h>
 #include <linux/bug.h>
 #include <linux/init.h>
 #include <linux/jump_label.h>
@@ -31,9 +32,9 @@
 #include <clocksource/arm_arch_timer.h>
 
 #if IS_ENABLED(CONFIG_ARM_ARCH_TIMER_OOL_WORKAROUND)
-extern struct static_key_false arch_timer_read_ool_enabled;
+extern atomic_t timer_unstable_counter_workaround_in_use;
 #define needs_unstable_timer_counter_workaround() \
-	static_branch_unlikely(&arch_timer_read_ool_enabled)
+	unlikely(atomic_read(&timer_unstable_counter_workaround_in_use))
 #else
 #define needs_unstable_timer_counter_workaround()  false
 #endif

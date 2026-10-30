@@ -496,6 +496,22 @@ int mem_cgroup_select_victim_node(struct mem_cgroup *memcg);
 void mem_cgroup_update_lru_size(struct lruvec *lruvec, enum lru_list lru,
 		int zid, int nr_pages);
 
+#ifdef CONFIG_MEMCG_LRU_DIAG
+void memcg_lru_diag_stage(struct page *page, struct lruvec *lruvec,
+			  enum lru_list lru, int zid);
+void memcg_lru_diag_unstage(void);
+#else
+static inline void memcg_lru_diag_stage(struct page *page,
+					struct lruvec *lruvec,
+					enum lru_list lru, int zid)
+{
+}
+
+static inline void memcg_lru_diag_unstage(void)
+{
+}
+#endif
+
 unsigned long mem_cgroup_node_nr_lru_pages(struct mem_cgroup *memcg,
 					   int nid, unsigned int lru_mask);
 

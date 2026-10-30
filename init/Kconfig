@@ -936,6 +936,14 @@ config MEMCG_KMEM
 	depends on MEMCG && !SLOB
 	default y
 
+config MEMCG_LRU_DIAG
+	bool "Capture the first memcg LRU underflow"
+	depends on MEMCG
+	help
+	  Keep one bounded record of the page whose deletion drives a memcg
+	  per-zone LRU counter negative, and print it beside the existing
+	  warning. Costs one per-CPU record and changes no accounting.
+
 config BLK_CGROUP
 	bool "IO controller"
 	depends on BLOCK

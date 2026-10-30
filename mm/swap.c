@@ -783,8 +783,16 @@ void release_pages(struct page **pages, int nr)
 
 			lruvec = mem_cgroup_page_lruvec(page, locked_pgdat);
 			VM_BUG_ON_PAGE(!PageLRU(page), page);
+			/*
+			 * page_lru() is a pure read; page_off_lru() clears
+			 * the Active/Unevictable flags, so calling it here
+			 * would change the list index the delete below uses.
+			 */
+			memcg_lru_diag_stage(page, lruvec, page_lru(page),
+					     page_zonenum(page));
 			__ClearPageLRU(page);
 			del_page_from_lru_list(page, lruvec, page_off_lru(page));
+			memcg_lru_diag_unstage();
 		}
 
 		/* Clear Active bit in case of parallel mark_page_accessed */

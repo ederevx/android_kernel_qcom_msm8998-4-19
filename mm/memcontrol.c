@@ -1156,6 +1156,11 @@ out:
 	return lruvec;
 }
 
+#ifdef CONFIG_MEMCG_LRU_DIAG
+static void memcg_lru_diag_report(struct lruvec *lruvec, enum lru_list lru,
+				  int zid, int nr_pages, long size);
+#endif
+
 /**
  * mem_cgroup_update_lru_size - account for adding or removing an lru page
  * @lruvec: mem_cgroup per zone lru vector
@@ -1184,6 +1189,10 @@ void mem_cgroup_update_lru_size(struct lruvec *lruvec, enum lru_list lru,
 		*lru_size += nr_pages;
 
 	size = *lru_size;
+#ifdef CONFIG_MEMCG_LRU_DIAG
+	if (size < 0)
+		memcg_lru_diag_report(lruvec, lru, zid, nr_pages, size);
+#endif
 	if (WARN_ONCE(size < 0,
 		"%s(%p, %d, %d): lru_size %ld\n",
 		__func__, lruvec, lru, nr_pages, size)) {
@@ -1194,6 +1203,91 @@ void mem_cgroup_update_lru_size(struct lruvec *lruvec, enum lru_list lru,
 	if (nr_pages > 0)
 		*lru_size += nr_pages;
 }
+
+#ifdef CONFIG_MEMCG_LRU_DIAG
+/*
+ * One staged page per CPU: release_pages() sets it while it holds lru_lock and
+ * the accounting update below consumes it for the same deletion. The record is
+ * bounded on purpose - no allocation, no name lookup, and a capped walk of the
+ * list the page is expected to sit on.
+ */
+struct memcg_lru_diag {
+	struct page *page;
+	unsigned long flags;
+	int refcount;
+	int mapcount;
+	void *mapping;
+	int nid;
+	struct lruvec *lruvec;
+	struct mem_cgroup *memcg;
+	enum lru_list lru;
+	int zid;
+};
+
+static DEFINE_PER_CPU(struct memcg_lru_diag, memcg_lru_diag);
+
+void memcg_lru_diag_stage(struct page *page, struct lruvec *lruvec,
+			  enum lru_list lru, int zid)
+{
+	struct memcg_lru_diag *d = this_cpu_ptr(&memcg_lru_diag);
+
+	d->page = page;
+	d->flags = page->flags;
+	d->refcount = page_ref_count(page);
+	d->mapcount = page_mapcount(page);
+	d->mapping = page->mapping;
+	d->nid = page_to_nid(page);
+	d->lruvec = lruvec;
+	d->memcg = page->mem_cgroup;
+	d->lru = lru;
+	d->zid = zid;
+}
+
+void memcg_lru_diag_unstage(void)
+{
+	this_cpu_ptr(&memcg_lru_diag)->page = NULL;
+}
+
+static bool memcg_lru_diag_on_list(struct lruvec *lruvec, enum lru_list lru,
+				   struct page *page)
+{
+	struct list_head *head = &lruvec->lists[lru];
+	struct list_head *pos = head->next;
+	int budget = 32;
+
+	while (pos != head && budget--) {
+		if (pos == &page->lru)
+			return true;
+		pos = pos->next;
+	}
+
+	return false;
+}
+
+static void memcg_lru_diag_report(struct lruvec *lruvec, enum lru_list lru,
+				  int zid, int nr_pages, long size)
+{
+	struct memcg_lru_diag *d = this_cpu_ptr(&memcg_lru_diag);
+	struct mem_cgroup *lruvec_mc = lruvec_memcg(lruvec);
+	static bool printed;
+	struct page *page = d->page;
+
+	if (!page || READ_ONCE(printed))
+		return;
+	WRITE_ONCE(printed, true);
+
+	pr_info("memcg_lru_diag: update lruvec=%p lru=%d zid=%d delta=%d size=%ld\n",
+		lruvec, lru, zid, nr_pages, size);
+	pr_info("memcg_lru_diag: staged lruvec=%p lru=%d zid=%d page_memcg=%p lruvec_memcg=%p\n",
+		d->lruvec, d->lru, d->zid, d->memcg, lruvec_mc);
+	pr_info("memcg_lru_diag: page=%p pfn=%lu nid=%d flags=%lx ref=%d map=%d mapping=%p\n",
+		page, page_to_pfn(page), d->nid, d->flags, d->refcount,
+		d->mapcount, d->mapping);
+	pr_info("memcg_lru_diag: page on staged list=%d on update list=%d\n",
+		memcg_lru_diag_on_list(d->lruvec, d->lru, page),
+		memcg_lru_diag_on_list(lruvec, lru, page));
+}
+#endif /* CONFIG_MEMCG_LRU_DIAG */
 
 bool task_in_mem_cgroup(struct task_struct *task, struct mem_cgroup *memcg)
 {

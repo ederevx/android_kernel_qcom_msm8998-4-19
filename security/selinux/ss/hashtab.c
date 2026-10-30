@@ -5,6 +5,7 @@
  * Author : Stephen Smalley, <sds@tycho.nsa.gov>
  */
 #include <linux/kernel.h>
+#include <linux/gfp.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
@@ -39,12 +40,14 @@ struct hashtab *hashtab_create(u32 (*hash_value)(struct hashtab *h, const void *
 	return p;
 }
 
-int hashtab_insert(struct hashtab *h, void *key, void *datum)
+int hashtab_insert(struct hashtab *h, void *key, void *datum, gfp_t gfp)
 {
 	u32 hvalue;
 	struct hashtab_node *prev, *cur, *newnode;
 
-	cond_resched();
+	/* Rescheduling is only safe where the caller may sleep. */
+	if (gfpflags_allow_blocking(gfp))
+		cond_resched();
 
 	if (!h || h->nel == HASHTAB_MAX_NODES)
 		return -EINVAL;
@@ -60,7 +63,7 @@ int hashtab_insert(struct hashtab *h, void *key, void *datum)
 	if (cur && (h->keycmp(h, key, cur->key) == 0))
 		return -EEXIST;
 
-	newnode = kmem_cache_zalloc(hashtab_node_cachep, GFP_KERNEL);
+	newnode = kmem_cache_zalloc(hashtab_node_cachep, gfp);
 	if (!newnode)
 		return -ENOMEM;
 	newnode->key = key;

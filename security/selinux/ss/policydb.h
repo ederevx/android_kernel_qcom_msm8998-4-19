@@ -360,14 +360,21 @@ static inline int next_entry(void *buf, struct policy_file *fp, size_t bytes)
 	return 0;
 }
 
+/*
+ * A NULL fp->data measures the serialized size instead of writing it: the
+ * bytes are still counted against fp->len, so the caller learns the length
+ * from the difference without allocating a buffer.
+ */
 static inline int put_entry(const void *buf, size_t bytes, int num, struct policy_file *fp)
 {
 	size_t len = bytes * num;
 
 	if (len > fp->len)
 		return -EINVAL;
-	memcpy(fp->data, buf, len);
-	fp->data += len;
+	if (fp->data) {
+		memcpy(fp->data, buf, len);
+		fp->data += len;
+	}
 	fp->len -= len;
 
 	return 0;

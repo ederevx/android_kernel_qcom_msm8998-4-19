@@ -254,7 +254,7 @@ int cond_read_bool(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto err;
 	key[len] = '\0';
-	rc = hashtab_insert(h, key, booldatum);
+	rc = hashtab_insert(h, key, booldatum, GFP_KERNEL);
 	if (rc)
 		goto err;
 
@@ -325,7 +325,8 @@ static int cond_insertf(struct avtab *a, struct avtab_key *k, struct avtab_datum
 		}
 	}
 
-	node_ptr = avtab_insert_nonunique(&p->te_cond_avtab, k, d);
+	node_ptr = avtab_insert_nonunique(&p->te_cond_avtab, k, d,
+						  GFP_KERNEL);
 	if (!node_ptr) {
 		pr_err("SELinux: could not insert rule.\n");
 		rc = -ENOMEM;

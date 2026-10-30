@@ -23,6 +23,8 @@
 #ifndef _SS_AVTAB_H_
 #define _SS_AVTAB_H_
 
+#include <linux/gfp.h>
+
 #include "security.h"
 #include <linux/flex_array.h>
 
@@ -108,7 +110,7 @@ int avtab_write_item(struct policydb *p, struct avtab_node *cur, void *fp);
 int avtab_write(struct policydb *p, struct avtab *a, void *fp);
 
 struct avtab_node *avtab_insert_nonunique(struct avtab *h, struct avtab_key *key,
-					  struct avtab_datum *datum);
+					  struct avtab_datum *datum, gfp_t gfp);
 
 struct avtab_node *avtab_search_node(struct avtab *h, struct avtab_key *key);
 

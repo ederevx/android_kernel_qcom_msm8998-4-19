@@ -202,7 +202,7 @@ static int roles_init(struct policydb *p)
 	if (!key)
 		goto out;
 
-	rc = hashtab_insert(p->p_roles.table, key, role);
+	rc = hashtab_insert(p->p_roles.table, key, role, GFP_KERNEL);
 	if (rc)
 		goto out;
 
@@ -1157,7 +1157,7 @@ static int perm_read(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto bad;
 
-	rc = hashtab_insert(h, key, perdatum);
+	rc = hashtab_insert(h, key, perdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 
@@ -1202,7 +1202,7 @@ static int common_read(struct policydb *p, struct hashtab *h, void *fp)
 			goto bad;
 	}
 
-	rc = hashtab_insert(h, key, comdatum);
+	rc = hashtab_insert(h, key, comdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1416,7 +1416,7 @@ static int class_read(struct policydb *p, struct hashtab *h, void *fp)
 		cladatum->default_type = le32_to_cpu(buf[0]);
 	}
 
-	rc = hashtab_insert(h, key, cladatum);
+	rc = hashtab_insert(h, key, cladatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 
@@ -1473,7 +1473,7 @@ static int role_read(struct policydb *p, struct hashtab *h, void *fp)
 		goto bad;
 	}
 
-	rc = hashtab_insert(h, key, role);
+	rc = hashtab_insert(h, key, role, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1520,7 +1520,7 @@ static int type_read(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto bad;
 
-	rc = hashtab_insert(h, key, typdatum);
+	rc = hashtab_insert(h, key, typdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1597,7 +1597,7 @@ static int user_read(struct policydb *p, struct hashtab *h, void *fp)
 			goto bad;
 	}
 
-	rc = hashtab_insert(h, key, usrdatum);
+	rc = hashtab_insert(h, key, usrdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1638,7 +1638,7 @@ static int sens_read(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto bad;
 
-	rc = hashtab_insert(h, key, levdatum);
+	rc = hashtab_insert(h, key, levdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1671,7 +1671,7 @@ static int cat_read(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto bad;
 
-	rc = hashtab_insert(h, key, catdatum);
+	rc = hashtab_insert(h, key, catdatum, GFP_KERNEL);
 	if (rc)
 		goto bad;
 	return 0;
@@ -1911,7 +1911,7 @@ static int range_read(struct policydb *p, void *fp)
 			goto out;
 		}
 
-		rc = hashtab_insert(p->range_tr, rt, r);
+		rc = hashtab_insert(p->range_tr, rt, r, GFP_KERNEL);
 		if (rc)
 			goto out;
 
@@ -1984,7 +1984,7 @@ static int filename_trans_read(struct policydb *p, void *fp)
 		if (rc)
 			goto out;
 
-		rc = hashtab_insert(p->filename_trans, ft, otype);
+		rc = hashtab_insert(p->filename_trans, ft, otype, GFP_KERNEL);
 		if (rc) {
 			/*
 			 * Do not return -EEXIST to the caller, or the system

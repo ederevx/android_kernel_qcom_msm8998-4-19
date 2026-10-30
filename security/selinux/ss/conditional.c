@@ -254,7 +254,7 @@ int cond_read_bool(struct policydb *p, struct hashtab *h, void *fp)
 	if (rc)
 		goto err;
 	key[len] = '\0';
-	rc = hashtab_insert(h, key, booldatum);
+	rc = hashtab_insert(h, key, booldatum, GFP_KERNEL);
 	if (rc)
 		goto err;
 

@@ -11,6 +11,8 @@
 #ifndef _SS_HASHTAB_H_
 #define _SS_HASHTAB_H_
 
+#include <linux/gfp.h>
+
 #define HASHTAB_MAX_NODES	0xffffffff
 
 struct hashtab_node {
@@ -52,7 +54,7 @@ struct hashtab *hashtab_create(u32 (*hash_value)(struct hashtab *h, const void *
  * -EINVAL for general errors or
   0 otherwise.
  */
-int hashtab_insert(struct hashtab *h, void *k, void *d);
+int hashtab_insert(struct hashtab *h, void *k, void *d, gfp_t gfp);
 
 /*
  * Searches for the entry with the specified key in the hash table.

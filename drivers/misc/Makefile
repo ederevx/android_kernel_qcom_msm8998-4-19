@@ -79,3 +79,4 @@ obj-$(CONFIG_FPR_FPC)		+= fpr_FingerprintCard/
 obj-y                           += qrc/
 obj-$(CONFIG_KINECTICS_XR_NORDIC) += kxrctrl/
 obj-$(CONFIG_NFC_PN547)		+= pn547/
+obj-$(CONFIG_ONEPLUS_PANIC_TRIGGER) += oneplus_panic_trigger.o

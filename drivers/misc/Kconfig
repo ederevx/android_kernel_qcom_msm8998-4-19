@@ -668,3 +668,12 @@ config OKL4_LINK_SHBUF
 	      transport. This driver presents the link to Linux as a character device
 	      which can be written to or read from to access the shared memory. An ioctl
 	      on the device is used to send a virtual interrupt to the partner cell.
+
+config ONEPLUS_PANIC_TRIGGER
+	tristate "OnePlus operator-triggered panic diagnostic"
+	depends on ARM64 && m
+	default n
+	help
+	  Build an inert-on-load diagnostic module whose root-only trigger
+	  parameter panics the kernel when written. Intended only for
+	  operator-controlled crash-dump diagnostics.

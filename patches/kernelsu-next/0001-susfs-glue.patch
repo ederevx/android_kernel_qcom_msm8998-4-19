@@ -62,7 +62,7 @@ index 946966dc..3c0e684c 100644
 +
  endmenu
 diff --git a/kernel/core/init.c b/kernel/core/init.c
-index 9be09872..68c5e933 100644
+index 9be09872..bc553891 100644
 --- a/kernel/core/init.c
 +++ b/kernel/core/init.c
 @@ -5,6 +5,9 @@
@@ -86,6 +86,16 @@ index 9be09872..68c5e933 100644
  	ksu_feature_init();
  
  	ksu_sulog_init();
+@@ -154,7 +161,8 @@ int __init kernelsu_init(void)
+ 	if (ksu_late_loaded) {
+ 		pr_info("late load mode, skipping kprobe hooks\n");
+ 
+-		apply_kernelsu_rules();
++		if (apply_kernelsu_rules())
++			pr_err("kernelsu: failed to measure the selinux policy\n");
+ 		cache_sid();
+ 		setup_ksu_cred();
+ 
 diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
 index 3dddf937..748b9216 100644
 --- a/kernel/hook/setuid_hook.c
@@ -149,6 +159,139 @@ index 3dddf937..748b9216 100644
  
      return 0;
  }
+diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
+index f3295f47..0a7a998f 100644
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -269,7 +269,8 @@ static bool check_argv(struct user_arg_ptr argv, int index,
+ static void ksu_initialize_selinux_tw_func(struct callback_head *cb)
+ {
+ 	ksu_selinux_hide_handle_second_stage();
+-	apply_kernelsu_rules();
++	if (apply_kernelsu_rules())
++		pr_err("kernelsu: failed to measure the selinux policy\n");
+ 	ksu_feature_apply_forced();
+ 	cache_sid();
+ 	setup_ksu_cred();
+@@ -333,7 +334,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
+ 		    check_argv(*argv, 1, "--second-stage", buf, sizeof(buf))) {
+ 			/* This applies to versions between Android 6 ~ 7 */
+ 			pr_info("/init second_stage executed\n");
+-			apply_kernelsu_rules();
++			if (apply_kernelsu_rules())
++				pr_err("kernelsu: failed to measure the selinux policy\n");
+ 			setup_ksu_cred();
+ 			init_second_stage_executed = true;
+ 		} else if (count(*argv, MAX_ARG_STRINGS) == 1 &&
+@@ -364,7 +366,8 @@ int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
+ 					    (!strcmp(env_value, "1") ||
+ 					     !strcmp(env_value, "true"))) {
+ 						pr_info("/init second_stage executed\n");
+-						apply_kernelsu_rules();
++						if (apply_kernelsu_rules())
++							pr_err("kernelsu: failed to measure the selinux policy\n");
+ 						setup_ksu_cred();
+ 						init_second_stage_executed = true;
+ 					}
+diff --git a/kernel/selinux/rules.c b/kernel/selinux/rules.c
+index b7a40522..a76090dd 100644
+--- a/kernel/selinux/rules.c
++++ b/kernel/selinux/rules.c
+@@ -198,12 +198,13 @@ static int apply_kernelsu_rules_fn(void *ptr)
+     ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "getpgid");
+     ksu_allow(db, "system_server", KERNEL_SU_DOMAIN, "process", "sigkill");
+ 
+-    return 0;
++    return ksu_policydb_fixup_len(db, "apply_kernelsu_rules");
+ }
+ 
+-void apply_kernelsu_rules()
++int apply_kernelsu_rules()
+ {
+ 	struct policydb *db;
++	int ret = 0;
+ 
+ 	if (!getenforce()) {
+ 		pr_info("SELinux permissive or disabled, apply rules!\n");
+@@ -219,7 +220,7 @@ void apply_kernelsu_rules()
+ 	}
+ 	db = &pol->policydb;
+ 
+-	apply_kernelsu_rules_fn((void *)db);
++	ret = apply_kernelsu_rules_fn((void *)db);
+ 
+ 	rcu_assign_pointer(selinux_state.policy, pol);
+ 	synchronize_rcu();
+@@ -228,6 +229,8 @@ void apply_kernelsu_rules()
+ 	reset_avc_cache();
+ out_unlock:
+ 	mutex_unlock(&selinux_state.policy_mutex);
++
++	return ret;
+ #else
+ 
+ 	db = get_policydb();
+@@ -245,25 +248,19 @@ out_unlock:
+ 	 */
+ 	write_lock(lock);
+ 
+-	apply_kernelsu_rules_fn((void *)db);
++	ret = apply_kernelsu_rules_fn((void *)db);
+ 
+ 	write_unlock(lock);
+-	/*
+-	 * ksu_policydb_fixup_len() takes a GFP_KERNEL kvmalloc(), so it must run
+-	 * with the write lock released: sleeping while the write side is held is
+-	 * exactly what deadlocks readers in security_compute_av().
+-	 */
+-	ksu_policydb_fixup_len(db, "apply_kernelsu_rules");
+ 	goto out_reset_avc;
+ 
+ do_stop_machine:
+-	stop_machine(apply_kernelsu_rules_fn, (void *)db, NULL);
+-	ksu_policydb_fixup_len(db, "apply_kernelsu_rules");
++	ret = stop_machine(apply_kernelsu_rules_fn, (void *)db, NULL);
+ 
+ out_reset_avc:
+ 	smp_mb();
+ 	reset_avc_cache();
+ #endif
++	return ret;
+ }
+ 
+ #define KSU_SEPOLICY_MAX_BATCH_SIZE (8U * 1024U * 1024U)
+@@ -653,6 +650,7 @@ static int handle_sepolicy_fn(void *data)
+ {
+ 	struct sepol_batch_cursor cursor;
+ 	int ret = 0;
++	int fixup_ret;
+ 	u32 cmd_index = 0;
+ 	int success_cmd_count = 0;
+ 
+@@ -704,6 +702,9 @@ static int handle_sepolicy_fn(void *data)
+ 	}
+ 
+ out:
++	fixup_ret = ksu_policydb_fixup_len(get_policydb(), "handle_sepolicy");
++	if (!ret)
++		ret = fixup_ret;
+ 	*(int *)(ctx->ctx_success_cmd_count) = success_cmd_count;
+ 	return ret;
+ }
+@@ -754,13 +755,10 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
+ 	ret = handle_sepolicy_fn((void *)&ctx);
+ 
+ 	write_unlock(lock);
+-	/* See apply_kernelsu_rules(): fixup_len may sleep, keep it unlocked. */
+-	ksu_policydb_fixup_len(get_policydb(), "handle_sepolicy");
+ 	goto out_done;
+ 
+ do_stop_machine:
+ 	ret = stop_machine(handle_sepolicy_fn, (void *)&ctx, NULL);
+-	ksu_policydb_fixup_len(get_policydb(), "handle_sepolicy");
+ 
+ out_done:
+ 	smp_mb();
 diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
 index 258ca819..962af3ee 100644
 --- a/kernel/selinux/selinux.c
@@ -208,10 +351,10 @@ index 258ca819..962af3ee 100644
  {
      return is_sid_match(cred, cached_zygote_sid, ZYGOTE_CONTEXT);
 diff --git a/kernel/selinux/selinux.h b/kernel/selinux/selinux.h
-index f9f1b757..0fdfc9c7 100644
+index f9f1b757..27c495c1 100644
 --- a/kernel/selinux/selinux.h
 +++ b/kernel/selinux/selinux.h
-@@ -53,6 +53,12 @@ bool is_adbd(const struct cred *cred);
+@@ -53,11 +53,17 @@ bool is_adbd(const struct cred *cred);
  
  bool is_ksu_domain();
  
@@ -224,6 +367,156 @@ index f9f1b757..0fdfc9c7 100644
  bool is_zygote(const struct cred* cred);
  
  bool is_init(const struct cred* cred);
+ 
+-void apply_kernelsu_rules();
++int apply_kernelsu_rules();
+ 
+ int handle_sepolicy(void __user *user_data, u64 data_len);
+ 
+diff --git a/kernel/selinux/sepolicy.c b/kernel/selinux/sepolicy.c
+index 89c30339..6c76d8c4 100644
+--- a/kernel/selinux/sepolicy.c
++++ b/kernel/selinux/sepolicy.c
+@@ -88,7 +88,7 @@ static bool add_typeattribute(struct policydb *db, const char *type,
+ // https://elixir.bootlin.com/linux/v5.9-rc1/source/security/selinux/ss/symtab.h
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+ #define symtab_search(s, name) hashtab_search((s)->table, name)
+-#define symtab_insert(s, name, datum) hashtab_insert((s)->table, name, datum)
++#define symtab_insert(s, name, datum) hashtab_insert((s)->table, name, datum, GFP_ATOMIC)
+ #endif
+ 
+ #define avtab_for_each(avtab, cur)                                             \
+@@ -130,7 +130,8 @@ static struct avtab_node *get_avtab_node(struct policydb *db,
+             avdatum.u.data = key->specified == AVTAB_AUDITDENY ? ~0U : 0U;
+         }
+         /* this is used to get the node - insertion is actually unique */
+-        node = avtab_insert_nonunique(&db->te_avtab, key, &avdatum);
++        node = avtab_insert_nonunique(&db->te_avtab, key, &avdatum,
++                                      GFP_ATOMIC);
+         if (!node)
+             return NULL;
+ 
+@@ -713,7 +714,7 @@ out:
+             goto free_key_pre57;
+         }
+         trans->otype = def->value;
+-        if (hashtab_insert(db->filename_trans, new_key, trans)) {
++        if (hashtab_insert(db->filename_trans, new_key, trans, GFP_ATOMIC)) {
+             pr_err("add_filename_trans: hashtab_insert failed\n");
+             goto free_name_pre57;
+         }
+@@ -1182,81 +1183,31 @@ bool ksu_genfscon(struct policydb *db, const char *fs_name, const char *path,
+     return add_genfscon(db, fs_name, path, ctx);
+ }
+ 
+-#define KSU_SEPOL_SYNC_MAX_BUF SZ_64M
+-#define KSU_SEPOL_SYNC_SLACK SZ_256K
+-#define KSU_SEPOL_SYNC_MAX_TRIES 4
+-
+-static int ksu_policydb_sync_len(struct policydb *db, const char *tag)
+-{
+-    const size_t tracked = db->len;
+-    unsigned int attempt = 0;
+-    size_t cap;
+-    int ret = -EINVAL;
+-
+-    if (tracked + KSU_SEPOL_SYNC_SLACK > KSU_SEPOL_SYNC_MAX_BUF) {
+-        pr_err("sepolicy: [%s] policydb.len %zu is too large to measure\n",
+-               tag, tracked);
+-        return -E2BIG;
+-    }
+-
+-    cap = tracked + KSU_SEPOL_SYNC_SLACK;
+-
+-    while (attempt < KSU_SEPOL_SYNC_MAX_TRIES &&
+-           cap <= KSU_SEPOL_SYNC_MAX_BUF) {
+-        struct policy_file fp;
+-        size_t remaining;
+-        /* kvmalloc, not vmalloc: legacy's compat layer remaps it for < 4.12 */
+-        void *buf = kvmalloc(cap, GFP_KERNEL);
+-
+-        if (!buf) {
+-            pr_err("sepolicy: [%s] kvmalloc(%zu) failed\n", tag, cap);
+-            return -ENOMEM;
+-        }
+-
+-        attempt++;
+-        fp.data = buf;
+-        fp.len = cap;
+-        ret = policydb_write(db, &fp);
+-        remaining = fp.len;
+-        kvfree(buf);
+-
+-        if (!ret) {
+-            const size_t actual = cap - remaining;
+-
+-            ksu_dbg("sepolicy: [%s] len tracked=%zu actual=%zu delta=%zd attempts=%u buf=%zu\n",
+-                    tag, tracked, actual,
+-                    (ssize_t)actual - (ssize_t)tracked, attempt, cap);
+-            db->len = actual;
+-            return 0;
+-        }
+-
+-        /* put_entry() returns -EINVAL once the buffer is exhausted */
+-        if (ret != -EINVAL) {
+-            pr_err("sepolicy: [%s] policydb_write failed: %d\n", tag, ret);
+-            return ret;
+-        }
+-
+-        ksu_dbg("sepolicy: [%s] buffer %zu too small (attempt %u)\n",
+-                tag, cap, attempt);
+-        cap *= 2;
+-    }
+-
+-    pr_err("sepolicy: [%s] giving up after %u attempts (tracked=%zu): %d\n",
+-           tag, attempt, tracked, ret);
+-    return ret;
+-}
+-
++/*
++ * Measure the serialized policy without allocating: put_entry() counts bytes
++ * against fp->len when fp->data is NULL. The caller runs this inside the same
++ * policy_rwlock write section as the mutation, so the length cannot be
++ * invalidated between the last change and the measurement.
++ */
+ int ksu_policydb_fixup_len(struct policydb *db, const char *tag)
+ {
+-    int ret = ksu_policydb_sync_len(db, tag);
++    const size_t tracked = db->len;
++    struct policy_file fp = {
++        .data = NULL,
++        .len = SIZE_MAX,
++    };
++    int ret = policydb_write(db, &fp);
+ 
+     if (ret) {
+-        db->len += KSU_SEPOL_SYNC_SLACK;
+-        pr_warn("sepolicy: [%s] could not measure policydb (%d), padded policydb.len by %zu to %zu\n",
+-                tag, ret, (size_t)KSU_SEPOL_SYNC_SLACK,
+-                (size_t)db->len);
++        pr_err("sepolicy: [%s] policydb_write failed: %d\n", tag, ret);
++        return ret;
+     }
+-    return ret;
++
++    db->len = SIZE_MAX - fp.len;
++    ksu_dbg("sepolicy: [%s] len tracked=%zu actual=%zu delta=%zd\n", tag,
++            tracked, (size_t)db->len,
++            (ssize_t)db->len - (ssize_t)tracked);
++    return 0;
+ }
+ 
+ #ifdef SELINUX_POLICY_INSTEAD_SELINUX_SS
+@@ -1434,7 +1385,8 @@ static int copy_avtab(struct avtab *new_avtab, struct avtab *old_avtab)
+     for (i = 0; i < old_avtab->nslot; i++) {
+         n = old_avtab->htable[i];
+         while (n) {
+-            p = avtab_insert_nonunique(new_avtab, &n->key, &n->datum);
++            p = avtab_insert_nonunique(new_avtab, &n->key, &n->datum,
++                                       GFP_KERNEL);
+             if (!p) {
+                 ret = -ENOMEM;
+                 goto out_free;
 diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
 index 12e19c52..4c61d9ed 100644
 --- a/kernel/supercall/dispatch.c

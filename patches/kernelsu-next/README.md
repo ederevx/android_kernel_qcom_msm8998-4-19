@@ -19,9 +19,25 @@ KernelSU-Next or by the SUSFS project.
   one that raised the supercall UAPI to 6, so it declares UAPI 5 and pairs with
   the released `v3.4.2` manager the device runs. Always clone the canonical
   repository, never a fork.
-- Glue: `0001-susfs-glue.patch` - 7 files, +202 lines, 0 deletions: the SUSFS
-  Kconfig block, the init and setuid hooks, the SID caches, and the supercall
-  dispatch. No other driver file is touched.
+- Glue: `0001-susfs-glue.patch` - 10 files, +250 lines, 94 deletions: the
+  SUSFS Kconfig block, the init and setuid hooks, the SID caches, the supercall
+  dispatch, and the `sepolicy.c` insert paths. It is the single record of the
+  driver adaptation; no copy is kept under `drivers/`.
+
+## Kernel coupling
+
+The patch requires a kernel at or after `d1575e817b6` ("selinux: accept caller
+`gfp` for policy inserts"). That commit threads an explicit `gfp_t` through
+`hashtab_insert()` and the avtab insert helpers, so the prototypes are four
+arguments (`security/selinux/ss/hashtab.h`, `avtab.h`). The patch's `sepolicy.c`
+insert sites pass `GFP_ATOMIC`, because KernelSU mutates the live policy with
+the policy rwlock write side held, which disables preemption for the whole run.
+On an older kernel this patch does not build (three-argument calls against the
+four-argument prototypes), and the pre-`d1575e817b6` shape reintroduces
+`sleeping function called from invalid context` at
+`security/selinux/ss/hashtab.c:47`. The two sides travel together: the kernel
+commit alone leaves the driver without its matching adaptation, and the patch
+alone lands on a tree that cannot hold it.
 - SUSFS host implementation: the `susfs: backport v2.3.0 kernel-side support
   for 4.19` commit of this branch. It is a third-party adaptation for non-GKI
   kernels, adapted from `JackA1ltman/NonGKI_Kernel_Build_2nd` at `dcd7896`,

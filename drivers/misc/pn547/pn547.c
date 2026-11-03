@@ -523,10 +523,16 @@ static int pn547_probe(struct i2c_client *client,
 		ret = PTR_ERR(pn547_dev->nfc_clk);
 		printk(KERN_ERR "%s: Couldn't get D1 (%d)\n",
 					__func__, ret);
-	} else {
-		if (clk_prepare_enable(pn547_dev->nfc_clk))
-			printk(KERN_ERR "%s: Couldn't prepare D1\n",
-					__func__);
+		kfree(pn547_dev);
+		goto err_exit;
+	}
+	ret = clk_prepare_enable(pn547_dev->nfc_clk);
+	if (ret) {
+		printk(KERN_ERR "%s: Couldn't prepare D1\n",
+				__func__);
+		clk_put(pn547_dev->nfc_clk);
+		kfree(pn547_dev);
+		goto err_exit;
 	}
 #endif
 	pr_info("%s : IRQ num %d\n", __func__, client->irq);
@@ -639,8 +645,10 @@ static int pn547_remove(struct i2c_client *client)
 
 	pn547_dev = i2c_get_clientdata(client);
 #ifdef CONFIG_NFC_PN547_PMC_CLK_REQ
-	if (pn547_dev->nfc_clk)
-		clk_unprepare(pn547_dev->nfc_clk);
+	if (!IS_ERR_OR_NULL(pn547_dev->nfc_clk)) {
+		clk_disable_unprepare(pn547_dev->nfc_clk);
+		clk_put(pn547_dev->nfc_clk);
+	}
 #endif
 	free_irq(client->irq, pn547_dev);
 	if (nfc_has_pinctrl) {
